@@ -23,6 +23,7 @@ const passengerSystem = {
     passengerCountElement: null, // 乘客数量显示元素引用
     chatHistory: [],          // 存储已触发的对话历史
     usedConversations: new Set(), // 存储已触发的对话内容的索引，避免重复
+    allCollectedMessageShown: false, // 是否已显示收集全部轶闻的恭喜弹窗
     chatSystem: {
         isChattingActive: false, // 是否有正在进行的对话
         chatProbability: 0.3,     // 每秒触发对话的概率（增加到0.3）
@@ -1996,6 +1997,18 @@ function showCurrentDialogueMessage() {
             const storyButton = document.getElementById('passenger-story-btn');
             if (storyButton) {
                 storyButton.innerHTML = `田园轶闻: ${passengerSystem.chatHistory.length}`;
+                
+                // 检查是否收集了全部轶闻
+                const totalConversations = getConversationsCount();
+                if (passengerSystem.chatHistory.length >= totalConversations && !passengerSystem.allCollectedMessageShown) {
+                    // 标记已显示恭喜消息，避免重复显示
+                    passengerSystem.allCollectedMessageShown = true;
+                    
+                    // 在对话结束后显示恭喜消息
+                    setTimeout(() => {
+                        showAllCollectedMessage();
+                    }, (currentDialogue.length - currentIndex) * passengerSystem.chatSystem.chatDuration * 1000 + 500);
+                }
             }
         }
         
@@ -2094,10 +2107,12 @@ function updatePassengerSystem(deltaTime) {
                     
                     // 把乘客标记为等待下车
                     passenger.isWaiting = true;
+                    passenger.waitingCountUpdated = false; // 初始化为未更新计数状态
                     
                     // 只有不在对话中的乘客才会立即触发下车提示
                     if (!isChattingNow) {
                         passengerSystem.waitingCount++;
+                        passenger.waitingCountUpdated = true; // 设为已经更新计数
                         
                         // 显示下车提示
                         showPassengerNotification();
@@ -2128,11 +2143,17 @@ function updatePassengerSystem(deltaTime) {
     if (!passengerSystem.chatSystem.isChattingActive) {
         // 检查是否有等待下车但因为在对话中而被延迟的乘客
         const delayedPassengers = passengerSystem.passengers.filter(p => 
-            p.isWaiting && !passengerSystem.waitingCount);
+            p.isWaiting && !p.waitingCountUpdated);
         
         if (delayedPassengers.length > 0) {
             console.log(`${delayedPassengers.length} 个对话结束的乘客可以下车了`);
             passengerSystem.waitingCount += delayedPassengers.length;
+            
+            // 标记这些乘客已更新等待计数，避免重复计数
+            delayedPassengers.forEach(p => {
+                p.waitingCountUpdated = true;
+            });
+            
             showPassengerNotification();
         }
     }
@@ -2150,6 +2171,7 @@ function updatePassengerSystem(deltaTime) {
             
             // 如果正在对话，暂时不让其下车，但保留下车状态
             if (isChattingNow) {
+                console.log(`乘客在座位 ${seatId} 正在对话中，暂时不下车`);
                 return false;
             }
             
@@ -2185,6 +2207,22 @@ function updatePassengerSystem(deltaTime) {
             
             // 隐藏下车提示
             hidePassengerNotification();
+        } else if (passengerSystem.waitingCount > 0) {
+            // 虽然有乘客等待下车，但他们都在对话中
+            console.log(`有 ${passengerSystem.waitingCount} 个乘客等待下车，但所有等待下车的乘客都在对话中`);
+        }
+    }
+    
+    // 检查是否存在计数错误导致乘客无法下车的情况
+    if (!busAnimation.isMoving && busAnimation.currentSpeedFactor < 0.01 && passengerSystem.waitingCount === 0) {
+        // 检查是否有标记为等待下车但没被计入waitingCount的乘客
+        const stuckPassengers = passengerSystem.passengers.filter(p => 
+            p.isWaiting && !passengerSystem.chatSystem.isChattingActive);
+        
+        if (stuckPassengers.length > 0) {
+            console.log(`发现计数问题：有${stuckPassengers.length}个乘客等待下车，但waitingCount为0，现在修正`);
+            passengerSystem.waitingCount = stuckPassengers.length;
+            showPassengerNotification();
         }
     }
     
@@ -2224,13 +2262,13 @@ function showChatHistory() {
     `;
     historyContainer.appendChild(title);
     
-    // 添加未触发对话数量信息
-    const remainingConversations = document.createElement('p');
     // 动态获取对话总数量
     const totalConversations = getConversationsCount();
     const usedCount = passengerSystem.usedConversations.size;
     const remainingCount = totalConversations - usedCount;
     
+    // 添加未触发对话数量信息
+    const remainingConversations = document.createElement('p');
     remainingConversations.innerHTML = ` ${totalConversations - remainingCount}/${totalConversations}`;
     remainingConversations.style.cssText = `
         text-align: center;
@@ -2240,6 +2278,9 @@ function showChatHistory() {
         font-style: italic;
     `;
     historyContainer.appendChild(remainingConversations);
+    
+    // 检查是否收集了全部轶闻
+    const allCollected = passengerSystem.chatHistory.length >= totalConversations;
     
     // 创建对话历史的滚动容器
     const scrollContainer = document.createElement('div');
@@ -2251,26 +2292,15 @@ function showChatHistory() {
     `;
     historyContainer.appendChild(scrollContainer);
     
-    // 如果没有历史记录
-    if (passengerSystem.chatHistory.length === 0) {
-        const emptyMessage = document.createElement('p');
-        emptyMessage.innerHTML = '坐在一起的乘客会相互聊天...';
-        emptyMessage.style.cssText = `
-            text-align: center;
-            color: #666;
-            font-style: italic;
-        `;
-        scrollContainer.appendChild(emptyMessage);
-    } else {
-        // 创建一个单一的容器来装所有轶事内容
+    // 根据是否有对话历史显示相应内容
+    if (passengerSystem.chatHistory.length > 0) {
+        // 创建所有对话的容器
         const allConversationsContainer = document.createElement('div');
         allConversationsContainer.style.cssText = `
-            padding: 15px;
-            background-color: #f5f5f5;
-            border-radius: 10px;
+            padding: 0 10px;
         `;
         
-        // 显示历史记录（已经是倒序排列）
+        // 遍历每个对话并创建对应的UI元素
         passengerSystem.chatHistory.forEach((conversation, index) => {
             // 只获取一句话纪事摘要，不再使用标题
             const summary = generateConversationSummary(conversation);
@@ -2324,27 +2354,217 @@ function showChatHistory() {
     const closeButton = document.createElement('button');
     closeButton.innerHTML = '关闭';
     closeButton.style.cssText = `
-        padding: 8px 20px;
-        background-color: #e74c3c;
+        padding: 8px 25px;
+        background-color: #3498db;
         color: white;
         border: none;
-        border-radius: 15px;
+        border-radius: 20px;
+        font-size: 14px;
         cursor: pointer;
-        font-weight: bold;
+        transition: all 0.2s;
+        box-shadow: 0 2px 5px rgba(0,0,0,0.2);
     `;
     
-    closeButton.addEventListener('click', () => {
-        document.body.removeChild(historyContainer);
+    closeButton.addEventListener('mouseover', () => {
+        closeButton.style.backgroundColor = '#2980b9';
+        closeButton.style.transform = 'scale(1.05)';
     });
     
-    // 添加按钮到底部按钮容器
-    buttonContainer.appendChild(closeButton);
+    closeButton.addEventListener('mouseout', () => {
+        closeButton.style.backgroundColor = '#3498db';
+        closeButton.style.transform = 'scale(1)';
+    });
     
-    // 将按钮容器添加到历史记录容器
+    // 添加点击事件
+    closeButton.addEventListener('click', () => {
+        document.body.removeChild(historyContainer);
+        
+        // 如果收集了全部轶闻且未显示过恭喜弹窗，则显示恭喜弹窗
+        if (allCollected && !passengerSystem.allCollectedMessageShown) {
+            showAllCollectedMessage();
+        }
+    });
+    
+    buttonContainer.appendChild(closeButton);
     historyContainer.appendChild(buttonContainer);
     
-    // 添加到页面
+    // 将容器添加到页面
     document.body.appendChild(historyContainer);
+    
+    // 如果收集了全部轶闻且未显示过恭喜弹窗，标记将要显示恭喜弹窗
+    if (allCollected && !passengerSystem.allCollectedMessageShown) {
+        passengerSystem.allCollectedMessageShown = true;
+    }
+}
+
+// 显示收集全部轶闻的恭喜弹窗
+function showAllCollectedMessage() {
+    // 创建弹窗容器
+    const messageContainer = document.createElement('div');
+    messageContainer.id = 'all-collected-message';
+    messageContainer.style.cssText = `
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        background-color: rgba(255, 255, 255, 0.98);
+        padding: 30px;
+        border-radius: 15px;
+        width: 80%;
+        max-width: 500px;
+        z-index: 3000;
+        box-shadow: 0 0 30px rgba(0,0,0,0.3);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        text-align: center;
+    `;
+    
+    // 创建标题
+    const title = document.createElement('h2');
+    title.innerHTML = `恭喜通关！`;
+    title.style.cssText = `
+        margin-bottom: 20px;
+        color: #27ae60;
+        font-size: 28px;
+    `;
+    messageContainer.appendChild(title);
+    
+    // 创建内容
+    const content = document.createElement('p');
+    content.innerHTML = `您已收集到全部30条田园轶闻！<br>接下来请尽情享受田园风光。<br>感谢您的游玩！`;
+    content.style.cssText = `
+        margin-bottom: 30px;
+        color: #555;
+        font-size: 16px;
+        line-height: 1.6;
+    `;
+    messageContainer.appendChild(content);
+    
+    // 创建按钮容器
+    const buttonsContainer = document.createElement('div');
+    buttonsContainer.style.cssText = `
+        display: flex;
+        justify-content: space-around;
+        width: 100%;
+    `;
+    
+    // 创建继续游玩按钮
+    const continueButton = document.createElement('button');
+    continueButton.innerHTML = '继续游玩';
+    continueButton.style.cssText = `
+        padding: 10px 25px;
+        background-color: #3498db;
+        color: white;
+        border: none;
+        border-radius: 20px;
+        font-size: 16px;
+        cursor: pointer;
+        transition: all 0.2s;
+        box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+    `;
+    
+    continueButton.addEventListener('mouseover', () => {
+        continueButton.style.backgroundColor = '#2980b9';
+        continueButton.style.transform = 'scale(1.05)';
+    });
+    
+    continueButton.addEventListener('mouseout', () => {
+        continueButton.style.backgroundColor = '#3498db';
+        continueButton.style.transform = 'scale(1)';
+    });
+    
+    // 添加继续游玩点击事件
+    continueButton.addEventListener('click', () => {
+        document.body.removeChild(messageContainer);
+    });
+    
+    // 创建重新开始按钮
+    const restartButton = document.createElement('button');
+    restartButton.innerHTML = '重新开始';
+    restartButton.style.cssText = `
+        padding: 10px 25px;
+        background-color: #27ae60;
+        color: white;
+        border: none;
+        border-radius: 20px;
+        font-size: 16px;
+        cursor: pointer;
+        transition: all 0.2s;
+        box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+    `;
+    
+    restartButton.addEventListener('mouseover', () => {
+        restartButton.style.backgroundColor = '#219d55';
+        restartButton.style.transform = 'scale(1.05)';
+    });
+    
+    restartButton.addEventListener('mouseout', () => {
+        restartButton.style.backgroundColor = '#27ae60';
+        restartButton.style.transform = 'scale(1)';
+    });
+    
+    // 添加重新开始点击事件
+    restartButton.addEventListener('click', () => {
+        // 重置游戏状态
+        resetGame();
+        // 关闭弹窗
+        document.body.removeChild(messageContainer);
+    });
+    
+    // 添加按钮到按钮容器
+    buttonsContainer.appendChild(continueButton);
+    buttonsContainer.appendChild(restartButton);
+    
+    // 添加按钮容器到主容器
+    messageContainer.appendChild(buttonsContainer);
+    
+    // 将容器添加到页面
+    document.body.appendChild(messageContainer);
+}
+
+// 重置游戏状态
+function resetGame() {
+    // 清空对话历史
+    passengerSystem.chatHistory = [];
+    
+    // 清空已使用对话记录
+    passengerSystem.usedConversations.clear();
+    
+    // 重置对话系统状态
+    passengerSystem.chatSystem.chattedSeats.clear();
+    passengerSystem.chatSystem.isChattingActive = false;
+    passengerSystem.chatSystem.currentDialogue = null;
+    passengerSystem.chatSystem.currentDialogueIndex = 0;
+    passengerSystem.chatSystem.activeChatters = [];
+    
+    // 重置全部轶闻收集标记
+    passengerSystem.allCollectedMessageShown = false;
+    
+    // 重置到站人数
+    passengerSystem.arrivedCount = 0;
+    if (passengerSystem.passengerCountElement) {
+        passengerSystem.passengerCountElement.innerHTML = `到站人数: 0`;
+    }
+    
+    // 更新轶闻按钮文本
+    const storyButton = document.getElementById('passenger-story-btn');
+    if (storyButton) {
+        storyButton.innerHTML = `田园轶闻: 0`;
+    }
+    
+    // 清空现有乘客
+    passengerSystem.passengers.forEach(passenger => {
+        if (passenger.seatId) {
+            seatSystem.freeSeat(passenger.seatId);
+        }
+    });
+    passengerSystem.passengers = [];
+    
+    // 添加新的随机乘客
+    initializeRandomPassengers(6);
+    
+    console.log('游戏已重置，所有轶闻记录和状态已清空');
 }
 
 // 根据对话内容生成概括性标题
