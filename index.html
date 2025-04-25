@@ -3,12 +3,263 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>3D 巴士场景</title>
-    <link rel="stylesheet" href="style.css">
+    <title>田园公交</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            overflow: hidden;
+            font-family: "Microsoft YaHei", "SimHei", sans-serif;
+        }
+
+        /* 开始界面样式 */
+        #start-screen {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(to bottom, #87CEEB, #3498db);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 2000;
+        }
+
+        #start-screen h1 {
+            font-size: 64px;
+            color: #fff;
+            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.3);
+            margin-bottom: 30px;
+        }
+
+        #start-screen p {
+            font-size: 20px;
+            color: #fff;
+            text-align: center;
+            max-width: 80%;
+            margin-bottom: 50px;
+            line-height: 1.5;
+            text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.2);
+        }
+
+        #start-button {
+            padding: 15px 40px;
+            font-size: 24px;
+            background-color: #27ae60;
+            color: white;
+            border: none;
+            border-radius: 30px;
+            cursor: pointer;
+            transition: all 0.3s;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+        }
+
+        #start-button:hover {
+            background-color: #2ecc71;
+            transform: scale(1.05);
+            box-shadow: 0 6px 12px rgba(0, 0, 0, 0.3);
+        }
+
+        /* 游戏界面容器 */
+        #game-container {
+            display: none;
+        }
+
+        #control-panel {
+            position: fixed;
+            bottom: 190px; /* 移动到座位图上方 */
+            left: 0;
+            width: 100%;
+            display: flex;
+            justify-content: center;
+            z-index: 1000;
+        }
+
+        #toggle-bus-btn {
+            padding: 10px 20px;
+            font-size: 18px;
+            border-radius: 20px;
+            border: none;
+            background-color: rgba(39, 174, 96, 0.7);
+            color: white;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        #toggle-bus-btn:hover {
+            background-color: rgba(39, 174, 96, 0.9);
+            transform: scale(1.05);
+        }
+
+        #toggle-bus-btn.stopped {
+            background-color: rgba(231, 76, 60, 0.7);
+        }
+        
+        /* 添加公交座位顶视图样式 */
+        #bus-seats-view {
+            position: fixed;
+            bottom: 20px; /* 贴近屏幕底部 */
+            left: 0;
+            width: 100%;
+            display: flex;
+            justify-content: center;
+            z-index: 999;
+        }
+        
+        .bus-interior {
+            background-color: #e3dfcc;
+            border: 4px solid #333;
+            border-radius: 10px;
+            padding: 15px 20px;
+            display: flex;
+            flex-direction: row;
+            gap: 20px;
+            width: 95%; /* 从90%改为95% */
+            max-width: 1000px; /* 从800px改为1000px */
+            position: relative;
+        }
+        
+        .bus-interior:before {
+            content: "";
+            position: absolute;
+            left: 5px;
+            top: 50%;
+            transform: translateY(-50%);
+            font-size: 24px;
+            color: #333;
+        }
+        
+        .bus-interior:after {
+            content: "";
+            position: absolute;
+            right: 5px;
+            top: 50%;
+            transform: translateY(-50%);
+            font-size: 24px;
+            color: #333;
+        }
+        
+        .seat-row {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            flex: 1;
+        }
+        
+        .seat {
+            background-color: #d35f39;
+            width: 100%;
+            height: 40px;
+            border: 1px solid #000;
+            position: relative;
+        }
+        
+        .passenger {
+            background-color: #000;
+            border-radius: 50%;
+            width: 25px;
+            height: 25px;
+            margin: 7px auto;
+        }
+        
+        /* 添加对话乘客高亮样式 */
+        .passenger.chatting {
+            background-color: #fff !important;
+            box-shadow: 0 0 5px rgba(255, 255, 255, 0.8);
+        }
+        
+        .door-row .seat {
+            margin-top: 90px;
+        }
+    </style>
 </head>
 <body>
+    <!-- 开始界面 -->
+    <div id="start-screen">
+        <h1>田园公交</h1>
+        <p>驾驶公交车穿越美丽乡村，管理乘客上下车，聆听旅途中的温馨对话，体验乡村公交司机的一天。</p>
+        <button id="start-button">开始游戏</button>
+    </div>
+
+    <!-- 游戏主界面容器 -->
+    <div id="game-container">
+        <!-- 添加公交座位顶视图 -->
+        <div id="bus-seats-view">
+            <div class="bus-interior">
+                <!-- 第1排座位 -->
+                <div class="seat-row">
+                    <div class="seat" id="seat-1-1-1"></div>
+                    <div class="seat" id="seat-1-1-2"></div>
+                    <div></div><div></div><div></div><div></div><div></div>
+                    <div class="seat" id="seat-1-2"></div>
+                </div>
+                
+                <!-- 第2排座位 -->
+                <div class="seat-row">
+                    <div class="seat" id="seat-2-1-1"></div>
+                    <div class="seat" id="seat-2-1-2"></div>
+                    <div></div><div></div><div></div><div></div><div></div>
+                    <div class="seat" id="seat-2-2"></div>
+                </div>
+                
+                <!-- 第3排座位（门的位置） -->
+                <div class="seat-row">
+                    <div></div><div></div><div></div><div></div><div></div>
+                    <div></div><div></div><div></div><div></div><div></div>
+                    <div></div><div></div><div></div><div></div><div></div>
+                    <div class="seat" id="seat-3-2"></div>
+                </div>
+                
+                <!-- 第4排座位 -->
+                <div class="seat-row">
+                    <div class="seat" id="seat-4-1-1"></div>
+                    <div class="seat" id="seat-4-1-2"></div>
+                    <div></div><div></div><div></div><div></div><div></div>
+                    <div class="seat" id="seat-4-2"></div>
+                </div>
+                
+                <!-- 第5排座位 -->
+                <div class="seat-row">
+                    <div class="seat" id="seat-5-1-1"></div>
+                    <div class="seat" id="seat-5-1-2"></div>
+                    <div></div><div></div><div></div><div></div><div></div>
+                    <div class="seat" id="seat-5-2"></div>
+                </div>
+            </div>
+        </div>
+
+        <div id="control-panel">
+            <button id="toggle-bus-btn">停车</button>
+        </div>
+    </div>
+    
+    <!-- 将脚本移至body末尾，确保DOM元素先加载 -->
     <script src="https://cdn.jsdelivr.net/npm/three@0.146.0/build/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.146.0/examples/js/controls/OrbitControls.js"></script>
-    <script src="main.js"></script>
+    <script>
+        // 等待所有资源加载完成
+        window.addEventListener('load', function() {
+            // 开始游戏按钮点击事件
+            document.getElementById('start-button').addEventListener('click', function() {
+                // 隐藏开始界面
+                document.getElementById('start-screen').style.display = 'none';
+                // 显示游戏界面
+                document.getElementById('game-container').style.display = 'block';
+                
+                // 动态加载主脚本
+                const mainScript = document.createElement('script');
+                mainScript.src = 'main.js';
+                document.body.appendChild(mainScript);
+                
+                console.log('游戏开始，加载主脚本');
+            });
+        });
+    </script>
 </body>
 </html> 

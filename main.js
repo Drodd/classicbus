@@ -7,6 +7,132 @@ renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setClearColor(0x87CEEB); // 天空蓝色背景
 document.body.appendChild(renderer.domElement);
 
+// 乘客管理相关变量
+const passengerSystem = {
+    passengers: [],           // 存储所有乘客信息
+    waitingCount: 0,          // 等待下车的乘客数量
+    arrivedCount: 0,          // 已成功下车的乘客数量
+    movingTime: 0,            // 巴士运动状态的累计时间（秒）
+    pedestrianSpawnTimer: 0,  // 路人生成计时器，初始设为0
+    pedestrianSpawnInterval: 10, // 路人生成间隔（秒）
+    pedestrians: [],          // 存储所有路人对象
+    pedestrianSpeed: 1,       // 路人移动速度
+    pedestrianWaitingToBoard: false, // 是否有路人正在等待上车
+    notificationShown: false, // 是否显示了乘客需要下车的提示
+    notificationElement: null, // 下车提示元素引用
+    passengerCountElement: null, // 乘客数量显示元素引用
+    chatHistory: [],          // 存储已触发的对话历史
+    chatSystem: {
+        isChattingActive: false, // 是否有正在进行的对话
+        chatProbability: 0.3,     // 每秒触发对话的概率（增加到0.3）
+        chatTimer: 0,            // 对话计时器
+        chatDuration: 3,         // 每句对话显示持续时间(秒)
+        activeChatters: [],      // 当前正在对话的乘客
+        chatBubbleElement: null, // 对话气泡元素引用
+        currentDialogueIndex: 0, // 当前对话的句子索引
+        currentDialogue: null,   // 当前正在进行的完整对话
+        chattedSeats: new Set()  // 存储已经参与过对话的座位ID
+    }
+};
+
+// 座位管理系统
+const seatSystem = {
+    seats: [
+        // 第1排
+        { id: "seat-1-1-1", type: "single", occupied: false, passenger: null },
+        { id: "seat-1-1-2", type: "single", occupied: false, passenger: null },
+        { id: "seat-1-2", type: "single", occupied: false, passenger: null },
+        // 第2排
+        { id: "seat-2-1-1", type: "single", occupied: false, passenger: null },
+        { id: "seat-2-1-2", type: "single", occupied: false, passenger: null },
+        { id: "seat-2-2", type: "single", occupied: false, passenger: null },
+        // 第3排 (只有一个单人座)
+        { id: "seat-3-2", type: "single", occupied: false, passenger: null },
+        // 第4排
+        { id: "seat-4-1-1", type: "single", occupied: false, passenger: null },
+        { id: "seat-4-1-2", type: "single", occupied: false, passenger: null },
+        { id: "seat-4-2", type: "single", occupied: false, passenger: null },
+        // 第5排
+        { id: "seat-5-1-1", type: "single", occupied: false, passenger: null },
+        { id: "seat-5-1-2", type: "single", occupied: false, passenger: null },
+        { id: "seat-5-2", type: "single", occupied: false, passenger: null }
+    ],
+    
+    // 获取所有空座位
+    getEmptySeats: function() {
+        return this.seats.filter(seat => !seat.occupied);
+    },
+    
+    // 随机选择一个空座位
+    getRandomEmptySeat: function() {
+        const emptySeats = this.getEmptySeats();
+        if (emptySeats.length === 0) {
+            return null;
+        }
+        const randomIndex = Math.floor(Math.random() * emptySeats.length);
+        return emptySeats[randomIndex];
+    },
+    
+    // 占用座位
+    occupySeat: function(seatId, passenger) {
+        const seat = this.seats.find(s => s.id === seatId);
+        if (seat) {
+            seat.occupied = true;
+            seat.passenger = passenger;
+            this.updateSeatVisual(seat.id, true);
+            return true;
+        }
+        return false;
+    },
+    
+    // 释放座位
+    freeSeat: function(seatId) {
+        const seat = this.seats.find(s => s.id === seatId);
+        if (seat && seat.occupied) {
+            seat.occupied = false;
+            seat.passenger = null;
+            this.updateSeatVisual(seat.id, false);
+            return true;
+        }
+        return false;
+    },
+    
+    // 更新座位的视觉效果
+    updateSeatVisual: function(seatId, isOccupied) {
+        console.log(`更新座位 ${seatId} 视觉效果, 占用: ${isOccupied}`);
+        const seatElement = document.getElementById(seatId);
+        if (seatElement) {
+            if (isOccupied) {
+                // 如果座位上没有乘客图标，添加一个
+                if (!seatElement.querySelector('.passenger')) {
+                    console.log(`座位 ${seatId} 添加乘客元素`);
+                    const passengerElement = document.createElement('div');
+                    passengerElement.className = 'passenger';
+                    seatElement.appendChild(passengerElement);
+                }
+            } else {
+                // 移除乘客图标
+                const passengerElement = seatElement.querySelector('.passenger');
+                if (passengerElement) {
+                    console.log(`座位 ${seatId} 移除乘客元素`);
+                    seatElement.removeChild(passengerElement);
+                }
+            }
+        } else {
+            console.error(`未找到座位元素 ${seatId}`);
+        }
+    },
+    
+    // 初始化所有座位的视觉效果
+    initializeSeats: function() {
+        this.seats.forEach(seat => {
+            this.updateSeatVisual(seat.id, seat.occupied);
+        });
+    },
+    
+    initialized: false
+};
+
 // 设置相机初始位置
 camera.position.set(0, 1.74, 9.85); // y = 10*sin(10°), z = 10*cos(10°)
 camera.lookAt(0, 0, 0);
@@ -15,7 +141,7 @@ camera.lookAt(0, 0, 0);
 const cameraSwing = {
     angle: 0,
     speed: 0.005,
-    amplitude: 3 * (Math.PI / 180), // 转换为弧度
+    amplitude: 0 * (Math.PI / 180), // 转换为弧度
     baseY: 1.74,
     baseZ: 9.85
 };
@@ -25,15 +151,22 @@ const busAnimation = {
     // Y轴偏移相关
     yOffset: 0,
     yOffsetSpeed: 0.4,  // 上下偏移的速度
-    yOffsetMax: 0.3,    // 最大偏移量为±0.3
+    yOffsetMax: 0.1,    // 最大偏移量为±0.1
     // 马达震动相关
     vibrationAngle: 0,
-    vibrationSpeed: 0,  // 震动频率
-    vibrationAmplitude: 0.01,  // 震动幅度
+    vibrationSpeed: 1,  // 震动频率
+    vibrationAmplitude: 0.005,  // 震动幅度
     // 旋转震动相关
     rotationVibrationAngle: 0,
-    rotationVibrationSpeed: 30,  // 旋转震动频率
-    rotationVibrationAmplitude: 0.005  // 旋转震动幅度（弧度）
+    rotationVibrationSpeed: 0,  // 旋转震动频率
+    rotationVibrationAmplitude: 0.002,  // 旋转震动幅度（弧度）
+    // 巴士状态控制
+    isMoving: true,  // 巴士是否处于运动状态，默认为运动状态
+    // 速度控制
+    acceleration: 4.0,  // 加速度系数
+    deceleration: 5.0,  // 减速度系数
+    maxVibrationSpeed: 30,  // 最大震动频率
+    currentSpeedFactor: 1.0  // 当前速度因子 (0.0-1.0)
 };
 
 // 创建纹理加载器
@@ -50,7 +183,7 @@ const wires = [];
 // 电线杆刷新计时器
 let poleTimer = 0;
 // 电线杆刷新间隔（秒）- 增加间隔，使电线杆间距增大
-const poleRefreshInterval = 5; // 从2秒增加到4秒，使间距增加2倍
+const poleRefreshInterval = 6; // 从2秒增加到4秒，使间距增加2倍
 // 初始化标志，表示是否为第一次创建
 let isFirstPoleCreated = false;
 // 屏幕边界 (比实际视口更宽，确保在完全不可见的位置创建和移除)
@@ -73,14 +206,15 @@ const MAX_HOUSES = 5; // 最多同时存在的小屋数量
 
 // 图层信息及其z位置和移动速度
 const layers = [
-    { name: "img_bg6_sky", zPosition: -60, width: 1536/12, height: 586/12, speed: -0.002, y: 20 },       // 最远的天空背景
-    { name: "img_bg5_mountain", zPosition: -50, width: 60, height: 10, speed: -0.01, y: -5 },  // 山脉
-    { name: "img_bg4_house", zPosition: -15, width: 4, height: 2.5, speed: 0.01, y: -2.5, isHouse: true }, // 小屋层，位置在山脉和田野之间
-    { name: "img_bg3_fields", zPosition: -25, width: 20, height: 50, speed: -0.02, y: -6.3 },    // 田野，调整高度和位置
-    { name: "img_bg1_road", zPosition: -1, width: 5, height: 2, speed: -0.03, y: -3 },        // 道路
-    { name: "img_bg2_pole", zPosition: -0.5, width: 1, height: 5, speed: 0.03, y: 0.5, isPole: true },  // 电线杆，在道路和巴士之间，正向速度表示从左到右
-    { name: "img_bus", zPosition: 1, width: 4, height: 2, isBus: true, speed: 0, y: -1.5 },     // 巴士
-    { name: "img_fg_bush", zPosition: 2, width: 2, height: 1, speed: -0.03, y: -2 }            // 前景灌木
+    { name: "img_bg6_sky", zPosition: -60, width: 1536/12, height: 586/12, speed: -0.002, y: 20, defaultSpeed: -0.002 },       // 最远的天空背景
+    { name: "img_bg5_mountain", zPosition: -50, width: 60/1.5, height: 10/1.5, speed: -0.01, y: -6, defaultSpeed: -0.01 },  // 山脉
+    { name: "img_bg4_house", zPosition: -15, width: 4, height: 2.5, speed: 0.01, y: -2.5, isHouse: true, defaultSpeed: 0.01 }, // 小屋层，位置在山脉和田野之间
+    { name: "img_bg3_fields", zPosition: -34, width: 20*1.3, height: 50*1.3, speed: -0.02, y: -7.0, defaultSpeed: -0.02 },    // 田野，调整高度和位置
+    { name: "img_bg1_road", zPosition: -1, width: 375*0.01, height: 135*0.01, speed: -0.03, y: -1.9, defaultSpeed: -0.03 },        // 道路
+    { name: "img_man", zPosition: 2, width: 45*0.005, height: 146*0.005, speed: 0, y: -0.35, isPedestrian: true, defaultSpeed: 0 },  // 路人层，在道路和巴士之间
+    { name: "img_bg2_pole", zPosition: 1, width: 103*0.01, height: 538*0.01, speed: 0.03, y: 1.8, isPole: true, defaultSpeed: 0.03 },  // 电线杆，在道路和巴士之间，正向速度表示从左到右
+    { name: "img_bus", zPosition: 3, width: 629*0.0045, height: 356*0.0045, isBus: true, speed: 0, y: 0, defaultSpeed: 0 },     // 巴士
+    { name: "img_fg_bush", zPosition: 4, width: 482*0.003, height: 236*0.003, speed: -0.03, y: -0.3, defaultSpeed: -0.03 }            // 前景灌木
 ];
 
 // 每个图层的实例管理器
@@ -119,7 +253,7 @@ class LayerInstanceManager {
             
             // 如果是田野图层，沿X轴旋转90度
             if (this.layer.name === "img_bg3_fields") {
-                instance.rotation.x = Math.PI / 2 - Math.PI * 0.03;
+                instance.rotation.x = Math.PI / 2 - Math.PI * 0.05;
             }
             
             // 添加到场景
@@ -138,39 +272,48 @@ class LayerInstanceManager {
         // 更新所有实例的位置
         for (let i = 0; i < this.instances.length; i++) {
             const instance = this.instances[i];
-            instance.mesh.position.x -= this.speed;
             
-            // 由于速度为负，现在检查实例是否完全离开了视口（右侧）
-            if (this.speed < 0 && instance.mesh.position.x > this.width * 3) {
-                // 找到最左侧的实例
-                let leftmostInstance = this.instances[0];
-                for (let j = 1; j < this.instances.length; j++) {
-                    if (this.instances[j].mesh.position.x < leftmostInstance.mesh.position.x) {
-                        leftmostInstance = this.instances[j];
-                    }
-                }
+            // 只有当速度不为0时才移动
+            if (Math.abs(this.speed) > 0.0001) {
+                instance.mesh.position.x -= this.speed;
                 
-                // 将当前实例移动到最左侧实例的左侧
-                instance.mesh.position.x = leftmostInstance.mesh.position.x - this.width;
-            }
-            // 保留原有的从右向左的移动逻辑
-            else if (this.speed > 0 && instance.mesh.position.x < -this.width * 1.5) {
-                // 找到最右侧的实例
-                let rightmostInstance = this.instances[0];
-                for (let j = 1; j < this.instances.length; j++) {
-                    if (this.instances[j].mesh.position.x > rightmostInstance.mesh.position.x) {
-                        rightmostInstance = this.instances[j];
+                // 由于速度为负，现在检查实例是否完全离开了视口（右侧）
+                if (this.speed < 0 && instance.mesh.position.x > this.width * 3) {
+                    // 找到最左侧的实例
+                    let leftmostInstance = this.instances[0];
+                    for (let j = 1; j < this.instances.length; j++) {
+                        if (this.instances[j].mesh.position.x < leftmostInstance.mesh.position.x) {
+                            leftmostInstance = this.instances[j];
+                        }
                     }
+                    
+                    // 将当前实例移动到最左侧实例的左侧
+                    instance.mesh.position.x = leftmostInstance.mesh.position.x - this.width;
                 }
-                
-                // 将当前实例移动到最右侧实例的右侧
-                instance.mesh.position.x = rightmostInstance.mesh.position.x + this.width;
+                // 保留原有的从右向左的移动逻辑
+                else if (this.speed > 0 && instance.mesh.position.x < -this.width * 1.5) {
+                    // 找到最右侧的实例
+                    let rightmostInstance = this.instances[0];
+                    for (let j = 1; j < this.instances.length; j++) {
+                        if (this.instances[j].mesh.position.x > rightmostInstance.mesh.position.x) {
+                            rightmostInstance = this.instances[j];
+                        }
+                    }
+                    
+                    // 将当前实例移动到最右侧实例的右侧
+                    instance.mesh.position.x = rightmostInstance.mesh.position.x + this.width;
+                }
             }
         }
     }
     
     setSpeed(newSpeed) {
-        this.speed = newSpeed;
+        // 确保新速度为数字
+        if (typeof newSpeed === 'number' && !isNaN(newSpeed)) {
+            this.speed = newSpeed;
+        } else {
+            console.error('setSpeed收到无效速度:', newSpeed);
+        }
     }
 }
 
@@ -213,6 +356,58 @@ layers.forEach(layer => {
         return;
     }
     
+    // 路人层的特殊处理，不在这里初始化，使用动态生成
+    if (layer.isPedestrian) {
+        textureLoader.load(`img/${layer.name}.png`, (texture) => {
+            // 设置纹理透明度
+            texture.transparent = true;
+            
+            // 创建材质
+            const material = new THREE.MeshBasicMaterial({
+                map: texture,
+                transparent: true,
+                side: THREE.DoubleSide
+            });
+            
+            // 创建平面几何体
+            const geometry = new THREE.PlaneGeometry(layer.width, layer.height);
+            
+            // 创建路人函数
+            function createPedestrian(x, isBoarding = true) {
+                // 创建新路人
+                const pedestrian = new THREE.Mesh(geometry.clone(), material.clone());
+                
+                // 设置位置
+                pedestrian.position.x = x;
+                pedestrian.position.y = layer.y;
+                pedestrian.position.z = layer.zPosition;
+                
+                // 添加标记和数据
+                pedestrian.userData = {
+                    isPedestrian: true,
+                    isBoarding: isBoarding, // true表示会上车，false表示是下车后的路人
+                    speed: passengerSystem.pedestrianSpeed * (0.8 + Math.random() * 0.4), // 速度有随机变化
+                    walkAnimTimer: Math.random() * Math.PI * 2, // 走路动画计时器随机初始化以错开走路节奏
+                    walkAnimSpeed: 20 + Math.random() * 20, // 走路频率
+                    walkAnimHeight: 0.015, // 走路上下幅度
+                    tiltAmount: 0// 倾斜幅度
+                };
+                
+                // 添加到场景
+                scene.add(pedestrian);
+                
+                // 添加到路人数组
+                passengerSystem.pedestrians.push(pedestrian);
+                
+                return pedestrian;
+            }
+            
+            // 暴露创建路人函数到全局
+            window.createPedestrian = createPedestrian;
+        });
+        return;
+    }
+    
     // 小屋层的特殊处理
     if (layer.isHouse) {
         textureLoader.load(`img/${layer.name}.png`, (texture) => {
@@ -223,7 +418,6 @@ layers.forEach(layer => {
             const material = new THREE.MeshBasicMaterial({
                 map: texture,
                 transparent: true,
-                side: THREE.DoubleSide
             });
             
             // 创建平面几何体
@@ -490,6 +684,284 @@ layers.forEach(layer => {
 const ambientLight = new THREE.AmbientLight(0xffffff, 1);
 scene.add(ambientLight);
 
+// 等待DOM完全加载后再初始化按钮
+function initializeBusButton() {
+    console.log('初始化巴士控制按钮');
+    
+    // 获取按钮元素
+    const toggleBusBtn = document.getElementById('toggle-bus-btn');
+    const addPassengerBtn = document.getElementById('add-passenger-btn');
+    const testChatBtn = document.getElementById('test-chat-btn');
+    
+    if (!toggleBusBtn) {
+        console.error('找不到巴士控制按钮!');
+        
+        // 如果找不到按钮，尝试再次创建
+        setTimeout(() => {
+            const controlPanel = document.getElementById('control-panel');
+            if (controlPanel) {
+                if (!document.getElementById('toggle-bus-btn')) {
+                    const newBtn = document.createElement('button');
+                    newBtn.id = 'toggle-bus-btn';
+                    newBtn.textContent = '停车';
+                    newBtn.className = 'running';
+                    controlPanel.appendChild(newBtn);
+                    console.log('动态创建了巴士控制按钮');
+                    
+                    // 为新创建的按钮注册事件
+                    initializeBusButton();
+                }
+            } else {
+                console.error('找不到控制面板元素!');
+            }
+        }, 500);
+        return;
+    }
+    
+    console.log('找到巴士控制按钮，初始化状态');
+    
+    // 设置初始状态
+    toggleBusBtn.textContent = busAnimation.isMoving ? '停车' : '发车';
+    toggleBusBtn.className = busAnimation.isMoving ? 'running' : 'stopped';
+    
+    // 移除可能已存在的事件监听以避免重复
+    toggleBusBtn.removeEventListener('click', busButtonClickHandler);
+    
+    // 添加新的事件监听
+    toggleBusBtn.addEventListener('click', busButtonClickHandler);
+    
+    // 添加乘客按钮事件
+    if (addPassengerBtn) {
+        addPassengerBtn.removeEventListener('click', addPassengerButtonClickHandler);
+        addPassengerBtn.addEventListener('click', addPassengerButtonClickHandler);
+    }
+    
+    // 添加测试对话按钮事件
+    if (testChatBtn) {
+        testChatBtn.removeEventListener('click', testChatButtonClickHandler);
+        testChatBtn.addEventListener('click', testChatButtonClickHandler);
+        
+        // 更新测试对话按钮文本，显示已对话的乘客数
+        updateTestChatButtonText();
+    }
+    
+    console.log('巴士控制按钮初始化完成');
+}
+
+// 更新测试对话按钮文本
+function updateTestChatButtonText() {
+    const testChatBtn = document.getElementById('test-chat-btn');
+    if (testChatBtn) {
+        if (passengerSystem.chatSystem.chattedSeats.size > 0) {
+            testChatBtn.textContent = `测试对话 (${passengerSystem.chatSystem.chattedSeats.size})`;
+        } else {
+            testChatBtn.textContent = '测试对话';
+        }
+    }
+}
+
+// 按钮点击处理函数
+function busButtonClickHandler(event) {
+    console.log('巴士控制按钮被点击');
+    
+    // 切换巴士状态
+    busAnimation.isMoving = !busAnimation.isMoving;
+    
+    // 更新按钮文本和样式
+    const btn = event.target;
+    btn.textContent = busAnimation.isMoving ? '停车' : '发车';
+    btn.className = busAnimation.isMoving ? 'running' : 'stopped';
+    
+    console.log('巴士状态已切换为:', busAnimation.isMoving ? '运动' : '停止');
+}
+
+// 添加乘客按钮点击处理函数
+function addPassengerButtonClickHandler() {
+    console.log('添加乘客按钮被点击');
+    
+    // 检查是否有空座位
+    const emptySeat = seatSystem.getRandomEmptySeat();
+    if (emptySeat) {
+        // 创建新乘客对象
+        const travelTime = 10 + Math.floor(Math.random() * 20); // 10-30秒的随机行程时间
+        const passenger = {
+            remainingTime: travelTime,
+            originalTime: travelTime,
+            seatId: emptySeat.id
+        };
+        
+        // 将乘客添加到系统并占用座位
+        passengerSystem.passengers.push(passenger);
+        seatSystem.occupySeat(emptySeat.id, passenger);
+        
+        console.log('已添加乘客到座位：', emptySeat.id);
+    } else {
+        console.log('巴士座位已满，无法添加更多乘客');
+        alert('巴士座位已满，无法添加更多乘客');
+    }
+}
+
+// 测试对话按钮点击处理函数
+function testChatButtonClickHandler(event) {
+    console.log('测试对话按钮被点击');
+    
+    // 检查是否是长按（按住Shift键）
+    if (event && event.shiftKey) {
+        // 长按重置所有已对话乘客的状态
+        passengerSystem.chatSystem.chattedSeats.clear();
+        console.log('已重置所有乘客的对话状态');
+        updateTestChatButtonText();
+        alert('已重置所有乘客的对话状态，现在所有乘客都可以再次对话');
+        return;
+    }
+    
+    // 如果当前有对话正在进行，先结束它
+    if (passengerSystem.chatSystem.isChattingActive) {
+        hideChatBubble();
+        passengerSystem.chatSystem.currentDialogue = null;
+        passengerSystem.chatSystem.currentDialogueIndex = 0;
+        passengerSystem.chatSystem.isChattingActive = false;
+    }
+    
+    // 自动添加乘客到一对座位上，确保有乘客可以对话
+    const targetSeats = [
+        ["seat-1-1-1", "seat-1-1-2"],
+        ["seat-2-1-1", "seat-2-1-2"],
+        ["seat-4-1-1", "seat-4-1-2"],
+        ["seat-5-1-1", "seat-5-1-2"]
+    ];
+    
+    // 寻找未参与过对话的座位对
+    let availablePairs = [];
+    
+    for (const pair of targetSeats) {
+        const seat1 = seatSystem.seats.find(s => s.id === pair[0]);
+        const seat2 = seatSystem.seats.find(s => s.id === pair[1]);
+        
+        // 检查这对座位是否都未参与过对话
+        if (!passengerSystem.chatSystem.chattedSeats.has(pair[0]) && 
+            !passengerSystem.chatSystem.chattedSeats.has(pair[1])) {
+            availablePairs.push(pair);
+        }
+    }
+    
+    // 如果没有可用座位对，提示用户而不是重用已对话的座位对
+    if (availablePairs.length === 0) {
+        console.log('所有座位对都已经参与过对话');
+        alert('所有可用的座位对都已经参与过对话。\n提示：按住Shift键点击"测试对话"按钮可以重置所有乘客的对话状态。');
+        return;
+    }
+    
+    // 随机选择一对座位
+    const randomPairIndex = Math.floor(Math.random() * availablePairs.length);
+    const targetPair = availablePairs[randomPairIndex];
+    
+    // 检查并填充这对座位
+    for (const seatId of targetPair) {
+        const seat = seatSystem.seats.find(s => s.id === seatId);
+        if (seat && !seat.occupied) {
+            // 创建新乘客对象
+            const travelTime = 10 + Math.floor(Math.random() * 20);
+            const passenger = {
+                remainingTime: travelTime,
+                originalTime: travelTime,
+                seatId: seatId
+            };
+            
+            // 将乘客添加到系统并占用座位
+            passengerSystem.passengers.push(passenger);
+            seatSystem.occupySeat(seatId, passenger);
+            console.log('已添加乘客到座位：', seatId);
+        }
+    }
+    
+    // 查找可能的对话乘客
+    const possibleChatters = findPotentialChatters();
+    console.log('找到可能对话乘客数量：', possibleChatters.length);
+    
+    if (possibleChatters.length >= 2) {
+        // 因为我们按座位对获取的乘客，所以必须成对选择
+        const pairCount = Math.floor(possibleChatters.length / 2);
+        const pairIndex = Math.floor(Math.random() * pairCount);
+        
+        // 选择一对乘客（相邻索引）
+        const chatter1 = possibleChatters[pairIndex * 2];
+        const chatter2 = possibleChatters[pairIndex * 2 + 1];
+        
+        console.log('选择对话的座位：', chatter1.id, chatter2.id);
+        
+        // 将这些座位设置为正在对话状态
+        passengerSystem.chatSystem.activeChatters = [chatter1, chatter2];
+        
+        // 高亮显示正在对话的乘客
+        highlightChatters([chatter1, chatter2]);
+        
+        // 获取随机对话内容
+        const dialogueContent = getRandomConversation();
+        console.log('选择的对话内容：', dialogueContent);
+        passengerSystem.chatSystem.currentDialogue = dialogueContent;
+        passengerSystem.chatSystem.currentDialogueIndex = 0;
+        
+        // 显示第一句对话
+        showCurrentDialogueMessage();
+        
+        // 设置对话状态
+        passengerSystem.chatSystem.isChattingActive = true;
+    } else {
+        console.log('没有足够的乘客可以进行对话测试，请先添加更多乘客');
+        alert('没有足够的乘客可以进行对话测试，请先添加更多乘客。\n提示：按住Shift键点击"测试对话"按钮可以重置所有乘客的对话状态。');
+    }
+}
+
+// 使用多种方式确保按钮初始化
+// 1. 直接调用（可能DOM尚未准备好）
+setTimeout(initializeBusButton, 500);
+
+// 2. DOMContentLoaded事件
+document.addEventListener('DOMContentLoaded', () => {
+    console.log('DOM内容已加载，初始化按钮');
+    initializeBusButton();
+    
+    // 添加键盘快捷键支持
+    document.addEventListener('keydown', (event) => {
+        // 空格键 - 暂停/启动巴士
+        if (event.code === 'Space') {
+            const toggleBusBtn = document.getElementById('toggle-bus-btn');
+            if (toggleBusBtn) {
+                toggleBusBtn.click();
+            }
+        }
+        
+        // 数字键1 - 添加乘客
+        if (event.code === 'Digit1' || event.code === 'Numpad1') {
+            const addPassengerBtn = document.getElementById('add-passenger-btn');
+            if (addPassengerBtn) {
+                addPassengerBtn.click();
+            }
+        }
+        
+        // 数字键2 - 测试对话
+        if (event.code === 'Digit2' || event.code === 'Numpad2') {
+            const testChatBtn = document.getElementById('test-chat-btn');
+            if (testChatBtn) {
+                testChatBtn.click();
+            }
+        }
+        
+        // N键 - 显示下一句对话
+        if (event.code === 'KeyN' && passengerSystem.chatSystem.isChattingActive) {
+            // 强制显示下一句对话
+            showCurrentDialogueMessage();
+        }
+    });
+});
+
+// 3. window.load事件
+window.addEventListener('load', () => {
+    console.log('页面完全加载，初始化按钮');
+    setTimeout(initializeBusButton, 100);
+});
+
 // 处理窗口大小变化
 window.addEventListener('resize', () => {
     const newWidth = window.innerWidth;
@@ -528,32 +1000,37 @@ function updatePole(deltaTime) {
         return;
     }
     
-    // 更新所有电线杆位置
+    // 取得当前电线杆速度
+    const poleSpeed = layerObjects["img_bg2_pole"].speed;
+    
+    // 更新所有电线杆位置，只有当速度不为0时才移动
     let needCreateNewWires = false;
     
-    for (let i = poles.length - 1; i >= 0; i--) {
-        const pole = poles[i];
-        pole.position.x += layerObjects["img_bg2_pole"].speed;
-        
-        // 如果电线杆移出屏幕很远，标记为需要删除
-        if (pole.position.x > SCREEN_BOUNDARY.right) {
-            // 标记电线杆为正在移除状态
-            pole.userData.isBeingRemoved = true;
+    if (Math.abs(poleSpeed) > 0.0001) {
+        for (let i = poles.length - 1; i >= 0; i--) {
+            const pole = poles[i];
+            pole.position.x += poleSpeed;
             
-            // 移除电线杆
-            scene.remove(pole);
-            poles.splice(i, 1);
-            
-            // 找到与此电线杆相关的所有电线并移除
-            for (let j = wires.length - 1; j >= 0; j--) {
-                const wire = wires[j];
-                if (wire.userData.pole1 === pole || wire.userData.pole2 === pole) {
-                    scene.remove(wire);
-                    wires.splice(j, 1);
+            // 如果电线杆移出屏幕很远，标记为需要删除
+            if (pole.position.x > SCREEN_BOUNDARY.right) {
+                // 标记电线杆为正在移除状态
+                pole.userData.isBeingRemoved = true;
+                
+                // 移除电线杆
+                scene.remove(pole);
+                poles.splice(i, 1);
+                
+                // 找到与此电线杆相关的所有电线并移除
+                for (let j = wires.length - 1; j >= 0; j--) {
+                    const wire = wires[j];
+                    if (wire.userData.pole1 === pole || wire.userData.pole2 === pole) {
+                        scene.remove(wire);
+                        wires.splice(j, 1);
+                    }
                 }
+                
+                needCreateNewWires = true;
             }
-            
-            needCreateNewWires = true;
         }
     }
     
@@ -567,47 +1044,49 @@ function updatePole(deltaTime) {
         });
     }
     
-    // 更新计时器
-    poleTimer += deltaTime;
-    
-    // 当计时器超过刷新间隔时，创建新电线杆（跳过第一个，因为已经在初始化时创建了）
-    if (poleTimer >= poleRefreshInterval) {
-        layerObjects["img_bg2_pole"].createPole();
+    // 更新计时器，只有当巴士在运动状态时才增加计时
+    if (busAnimation.currentSpeedFactor > 0.001) {
+        poleTimer += deltaTime;
         
-        // 如果有多个电线杆，确保创建电线
-        if (poles.length >= 2 && createWireBetweenPolesFunc) {
-            // 查找是否需要为最新的两个电线杆创建电线
-            const lastPoleIndex = poles.length - 1;
-            const secondLastPoleIndex = lastPoleIndex - 1;
+        // 当计时器超过刷新间隔时，创建新电线杆（跳过第一个，因为已经在初始化时创建了）
+        if (poleTimer >= poleRefreshInterval) {
+            layerObjects["img_bg2_pole"].createPole();
             
-            // 确保两个电线杆都存在且未被标记为正在移除
-            if (poles[secondLastPoleIndex] && !poles[secondLastPoleIndex].userData.isBeingRemoved) {
-                // 创建新电线
-                const newWire = createWireBetweenPolesFunc(poles[secondLastPoleIndex], poles[lastPoleIndex]);
+            // 如果有多个电线杆，确保创建电线
+            if (poles.length >= 2 && createWireBetweenPolesFunc) {
+                // 查找是否需要为最新的两个电线杆创建电线
+                const lastPoleIndex = poles.length - 1;
+                const secondLastPoleIndex = lastPoleIndex - 1;
                 
-                // 加入到电线数组
+                // 确保两个电线杆都存在且未被标记为正在移除
+                if (poles[secondLastPoleIndex] && !poles[secondLastPoleIndex].userData.isBeingRemoved) {
+                    // 创建新电线
+                    const newWire = createWireBetweenPolesFunc(poles[secondLastPoleIndex], poles[lastPoleIndex]);
+                    
+                    // 加入到电线数组
+                    if (newWire) {
+                        wires.push(newWire);
+                    }
+                }
+            }
+            
+            poleTimer = 0; // 重置计时器
+        }
+        
+        // 如果只有一个电线杆且它已经移动了一定距离，创建第二个电线杆
+        if (poles.length === 1 && !isFirstPoleCreated && poles[0].position.x > SCREEN_BOUNDARY.left + 5) {
+            layerObjects["img_bg2_pole"].createPole();
+            
+            // 创建两个电线杆之间的电线
+            if (createWireBetweenPolesFunc) {
+                const newWire = createWireBetweenPolesFunc(poles[0], poles[1]);
                 if (newWire) {
                     wires.push(newWire);
                 }
             }
+            
+            isFirstPoleCreated = true;
         }
-        
-        poleTimer = 0; // 重置计时器
-    }
-    
-    // 如果只有一个电线杆且它已经移动了一定距离，创建第二个电线杆
-    if (poles.length === 1 && !isFirstPoleCreated && poles[0].position.x > SCREEN_BOUNDARY.left + 5) {
-        layerObjects["img_bg2_pole"].createPole();
-        
-        // 创建两个电线杆之间的电线
-        if (createWireBetweenPolesFunc) {
-            const newWire = createWireBetweenPolesFunc(poles[0], poles[1]);
-            if (newWire) {
-                wires.push(newWire);
-            }
-        }
-        
-        isFirstPoleCreated = true;
     }
 }
 
@@ -622,6 +1101,61 @@ function animate(timestamp) {
     const deltaTime = (timestamp - lastTime) / 1000;
     lastTime = timestamp;
     
+    // 初始化座位系统（如果尚未初始化）
+    if (!seatSystem.initialized) {
+        seatSystem.initializeSeats();
+        seatSystem.initialized = true;
+    }
+    
+    // 更新巴士运动状态
+    let prevSpeedFactor = busAnimation.currentSpeedFactor;
+    
+    if (busAnimation.isMoving) {
+        // 巴士正在运行，需要逐渐加速到满速
+        busAnimation.currentSpeedFactor = Math.min(busAnimation.currentSpeedFactor + busAnimation.acceleration * deltaTime, 1.0);
+    } else {
+        // 巴士正在停止，需要逐渐减速到0
+        busAnimation.currentSpeedFactor = Math.max(busAnimation.currentSpeedFactor - busAnimation.deceleration * deltaTime, 0.0);
+    }
+    
+    // 防止数值过小导致精度问题
+    if (Math.abs(busAnimation.currentSpeedFactor) < 0.001) {
+        busAnimation.currentSpeedFactor = 0;
+    }
+    
+    // 如果速度因子变化，打印日志
+    if (Math.abs(prevSpeedFactor - busAnimation.currentSpeedFactor) > 0.01) {
+        console.log('速度因子更新:', busAnimation.currentSpeedFactor.toFixed(2));
+    }
+    
+    // 根据当前速度因子更新所有图层的速度
+    for (const layer of layers) {
+        if (layer.defaultSpeed !== undefined) {
+            const newSpeed = layer.defaultSpeed * busAnimation.currentSpeedFactor;
+            layer.speed = newSpeed;
+            
+            // 更新对应的图层管理器
+            if (layerManagers[layer.name]) {
+                layerManagers[layer.name].setSpeed(newSpeed);
+            }
+        }
+    }
+    
+    // 更新电线杆的速度
+    if (layerObjects["img_bg2_pole"]) {
+        const poleLayer = layers.find(l => l.name === "img_bg2_pole");
+        if (poleLayer) {
+            layerObjects["img_bg2_pole"].speed = poleLayer.speed;
+        }
+    }
+    
+    // 根据当前速度因子更新巴士的震动和摆动效果
+    busAnimation.vibrationSpeed = busAnimation.maxVibrationSpeed * busAnimation.currentSpeedFactor;
+    // 相机摇摆速度也随巴士状态变化
+    cameraSwing.speed = 0.005 * busAnimation.currentSpeedFactor;
+    // 巴士Y轴偏移也随状态变化
+    busAnimation.yOffsetSpeed = 0.4 * busAnimation.currentSpeedFactor;
+    
     // 更新每个图层的实例
     for (const layerName in layerManagers) {
         layerManagers[layerName].update();
@@ -635,7 +1169,16 @@ function animate(timestamp) {
         // 更新所有小屋位置
         for (let i = houses.length - 1; i >= 0; i--) {
             const house = houses[i];
-            house.position.x += house.userData.speed;
+            // 小屋速度也受到巴士运行状态的影响
+            const houseLayer = layers.find(l => l.isHouse);
+            if (houseLayer) {
+                house.userData.speed = Math.abs(houseLayer.speed) + Math.random() * 0.005 * busAnimation.currentSpeedFactor;
+            }
+            
+            // 只有当速度足够大时才移动小屋
+            if (busAnimation.currentSpeedFactor > 0.001) {
+                house.position.x += house.userData.speed;
+            }
             
             // 如果小屋移出屏幕右侧很远，移除它
             if (house.position.x > SCREEN_BOUNDARY.right + 10) {
@@ -644,14 +1187,19 @@ function animate(timestamp) {
             }
         }
         
-        // 更新小屋计时器
-        houseTimer += deltaTime;
-        
-        // 当计时器超过当前刷新间隔时，创建新小屋
-        if (houseTimer >= currentHouseInterval && window.createHouse) {
-            window.createHouse();
+        // 更新小屋计时器，只有当巴士在运动时才创建新小屋
+        if (busAnimation.currentSpeedFactor > 0.001) {
+            houseTimer += deltaTime;
+            
+            // 当计时器超过当前刷新间隔时，创建新小屋
+            if (houseTimer >= currentHouseInterval && window.createHouse) {
+                window.createHouse();
+            }
         }
     }
+    
+    // 更新乘客和路人系统
+    updatePassengerSystem(deltaTime);
     
     // 更新巴士动画（如果巴士已加载）
     if (bus) {
@@ -687,4 +1235,1095 @@ function animate(timestamp) {
 }
 
 // 启动动画循环
-animate(0); 
+animate(0);
+
+// 创建下车提示UI
+function createPassengerNotification() {
+    // 如果已经存在提示元素，则返回
+    if (passengerSystem.notificationElement) {
+        return;
+    }
+    
+    // 创建提示元素
+    const notification = document.createElement('div');
+    notification.id = 'passenger-notification';
+    notification.innerHTML = '有乘客需要下车';
+    notification.style.cssText = `
+        position: fixed;
+        top: 20px;
+        left: 50%;
+        transform: translateX(-50%);
+        background-color: rgba(231, 76, 60, 0.8);
+        color: white;
+        padding: 10px 20px;
+        border-radius: 20px;
+        font-size: 16px;
+        font-weight: bold;
+        z-index: 1000;
+        display: none;
+    `;
+    
+    document.body.appendChild(notification);
+    passengerSystem.notificationElement = notification;
+    
+    // 创建到站乘客数量显示
+    const passengerCountUI = document.createElement('div');
+    passengerCountUI.id = 'passenger-count';
+    passengerCountUI.innerHTML = '到站人数: 0';
+    passengerCountUI.style.cssText = `
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        background-color: rgba(52, 152, 219, 0.8);
+        color: white;
+        padding: 8px 15px;
+        border-radius: 15px;
+        font-size: 16px;
+        font-weight: bold;
+        z-index: 1000;
+    `;
+    
+    document.body.appendChild(passengerCountUI);
+    passengerSystem.passengerCountElement = passengerCountUI;
+    
+    // 创建乘客故事按钮
+    const storyButton = document.createElement('button');
+    storyButton.id = 'passenger-story-btn';
+    storyButton.innerHTML = '田园轶事: 0';
+    storyButton.style.cssText = `
+        position: fixed;
+        top: 60px;
+        right: 20px;
+        background-color: rgba(46, 204, 113, 0.8);
+        color: white;
+        padding: 8px 15px;
+        border-radius: 15px;
+        font-size: 16px;
+        font-weight: bold;
+        border: none;
+        cursor: pointer;
+        z-index: 1000;
+        transition: all 0.2s ease;
+    `;
+    
+    // 添加悬停效果
+    storyButton.addEventListener('mouseover', () => {
+        storyButton.style.backgroundColor = 'rgba(46, 204, 113, 1)';
+        storyButton.style.transform = 'scale(1.05)';
+    });
+    
+    storyButton.addEventListener('mouseout', () => {
+        storyButton.style.backgroundColor = 'rgba(46, 204, 113, 0.8)';
+        storyButton.style.transform = 'scale(1)';
+    });
+    
+    // 添加点击事件
+    storyButton.addEventListener('click', showChatHistory);
+    
+    document.body.appendChild(storyButton);
+}
+
+// 显示乘客下车提示
+function showPassengerNotification() {
+    if (!passengerSystem.notificationElement) {
+        createPassengerNotification();
+    }
+    
+    passengerSystem.notificationElement.style.display = 'block';
+    passengerSystem.notificationShown = true;
+}
+
+// 隐藏乘客下车提示
+function hidePassengerNotification() {
+    if (passengerSystem.notificationElement) {
+        passengerSystem.notificationElement.style.display = 'none';
+        passengerSystem.notificationShown = false;
+    }
+}
+
+// 生成路人
+function spawnPedestrians() {
+    // 随机生成3-6个路人
+    const count = 3 + Math.floor(Math.random() * 4);
+    console.log(`生成 ${count} 个路人`);
+    
+    // 在屏幕左侧可见区域生成路人
+    for (let i = 0; i < count; i++) {
+        // 随机位置，确保不会重叠但在屏幕左侧可见
+        const x = -8 - i * 1.2 - Math.random() * 1.2;
+        window.createPedestrian(x);
+    }
+}
+
+// 更新路人
+function updatePedestrians(deltaTime) {
+    if (passengerSystem.pedestrians.length === 0) {
+        return;
+    }
+    
+    // 获取道路图层的当前速度
+    const roadLayer = layers.find(l => l.name === "img_bg1_road");
+    const roadSpeed = roadLayer ? roadLayer.speed : -0.03 * busAnimation.currentSpeedFactor;
+    
+    // 遍历所有路人
+    for (let i = passengerSystem.pedestrians.length - 1; i >= 0; i--) {
+        const pedestrian = passengerSystem.pedestrians[i];
+        
+        // 获取路人原始Y位置（从layers数组中）
+        const pedLayer = layers.find(layer => layer.isPedestrian);
+        const baseY = pedLayer ? pedLayer.y : -1.4;
+        
+        // 路人移动逻辑
+        if (pedestrian.userData.isBoarding) {
+            // 如果巴士停止，路人会向巴士移动
+            if (!busAnimation.isMoving && busAnimation.currentSpeedFactor < 0.01) {
+                // 计算朝向巴士的移动
+                const directionToBus = Math.sign(bus.position.x - pedestrian.position.x);
+                pedestrian.position.x += directionToBus * pedestrian.userData.speed * deltaTime;
+                
+                // 更新走路动画计时器
+                pedestrian.userData.walkAnimTimer += pedestrian.userData.walkAnimSpeed * deltaTime;
+                
+                // 应用走路上下摆动效果
+                pedestrian.position.y = baseY + Math.sin(pedestrian.userData.walkAnimTimer) * pedestrian.userData.walkAnimHeight;
+                
+                // 应用前后倾斜效果，与上下运动相位差90度，使用余弦
+                pedestrian.rotation.z = Math.cos(pedestrian.userData.walkAnimTimer) * pedestrian.userData.tiltAmount;
+                
+                // 如果路人到达了巴士位置附近（考虑巴士宽度的一半）
+                if (Math.abs(pedestrian.position.x - bus.position.x) < 1.0) {
+                    // 检查是否有空座位
+                    const emptySeat = seatSystem.getRandomEmptySeat();
+                    if (emptySeat) {
+                        // 乘客上车
+                        console.log('乘客上车，坐在座位：', emptySeat.id);
+                        
+                        // 创建新乘客对象
+                        const travelTime = 10 + Math.floor(Math.random() * 20); // 10-30秒的随机行程时间
+                        const passenger = {
+                            remainingTime: travelTime,
+                            originalTime: travelTime,
+                            seatId: emptySeat.id
+                        };
+                        
+                        // 将乘客添加到系统并占用座位
+                        passengerSystem.passengers.push(passenger);
+                        seatSystem.occupySeat(emptySeat.id, passenger);
+                        
+                        // 移除路人对象
+                        scene.remove(pedestrian);
+                        passengerSystem.pedestrians.splice(i, 1);
+                    } else {
+                        console.log('巴士座位已满，乘客无法上车');
+                        // 将路人设为继续行走，不再尝试上车
+                        pedestrian.userData.isBoarding = false;
+                    }
+                }
+            } else {
+                // 巴士在运动，路人应该随着道路移动（相对于道路静止）
+                pedestrian.position.x -= roadSpeed;
+                
+                // 路人在站立等待时不应有走路动画
+                pedestrian.position.y = baseY;
+                pedestrian.rotation.z = 0; // 站立时不倾斜
+            }
+        } else {
+            // 下车后的路人，向右走离开，速度是路人自身速度加上道路带来的相对速度
+            pedestrian.position.x += pedestrian.userData.speed * 1.5 * deltaTime - roadSpeed;
+            
+            // 更新走路动画计时器
+            pedestrian.userData.walkAnimTimer += pedestrian.userData.walkAnimSpeed * deltaTime;
+            
+            // 应用走路上下摆动效果
+            pedestrian.position.y = baseY + Math.sin(pedestrian.userData.walkAnimTimer) * pedestrian.userData.walkAnimHeight;
+            
+            // 应用前后倾斜效果
+            pedestrian.rotation.z = Math.cos(pedestrian.userData.walkAnimTimer) * pedestrian.userData.tiltAmount;
+        }
+        
+        // 如果路人移出屏幕，移除它
+        if (pedestrian.position.x > SCREEN_BOUNDARY.right) {
+            scene.remove(pedestrian);
+            passengerSystem.pedestrians.splice(i, 1);
+        }
+    }
+}
+
+// 创建对话气泡UI
+function createChatBubble() {
+    // 如果已经存在对话气泡元素，则返回
+    if (passengerSystem.chatSystem.chatBubbleElement) {
+        return;
+    }
+    
+    // 创建对话气泡元素
+    const chatBubble = document.createElement('div');
+    chatBubble.id = 'chat-bubble';
+    chatBubble.style.cssText = `
+        position: fixed;
+        top: 84.5%;
+        left: 50%;
+        transform: translate(-50%, -50%) scale(0.8);
+        background-color: #fff;
+        color: #000;
+        padding: 12px 18px;
+        border-radius: 15px;
+        font-size: 14px;
+        z-index: 1001;
+        display: none;
+        width: 85%;
+        max-width: 800px;
+        text-align: center;
+        border: 1px solid #000;
+        box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+        opacity: 0;
+        transition: all 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+    `;
+    
+    // 将对话气泡添加到body中
+    document.body.appendChild(chatBubble);
+    passengerSystem.chatSystem.chatBubbleElement = chatBubble;
+}
+
+// 显示对话气泡
+function showChatBubble(message) {
+    if (!passengerSystem.chatSystem.chatBubbleElement) {
+        createChatBubble();
+    }
+    
+    if (passengerSystem.chatSystem.chatBubbleElement) {
+        const chatBubble = passengerSystem.chatSystem.chatBubbleElement;
+        
+        // 先重置动画状态
+        chatBubble.style.opacity = '0';
+        chatBubble.style.transform = 'translate(-50%, -50%) scale(0.8)';
+        chatBubble.style.display = 'block';
+        chatBubble.textContent = message;
+        
+        // 使用requestAnimationFrame确保样式变化生效
+        requestAnimationFrame(() => {
+            // 触发回弹动画
+            chatBubble.style.opacity = '1';
+            chatBubble.style.transform = 'translate(-50%, -50%) scale(1.05)';
+            
+            // 添加一个额外的动画帧来实现回弹效果
+            setTimeout(() => {
+                chatBubble.style.transform = 'translate(-50%, -50%) scale(1)';
+            }, 150);
+        });
+    }
+}
+
+// 隐藏对话气泡
+function hideChatBubble() {
+    if (passengerSystem.chatSystem.chatBubbleElement) {
+        const chatBubble = passengerSystem.chatSystem.chatBubbleElement;
+        console.log('隐藏对话气泡');
+        
+        // 先应用动画效果
+        chatBubble.style.opacity = '0';
+        chatBubble.style.transform = 'translate(-50%, -50%) scale(0.8)';
+        
+        // 动画结束后隐藏元素
+        setTimeout(() => {
+            chatBubble.style.display = 'none';
+            
+            // 重置活跃对话者
+            passengerSystem.chatSystem.activeChatters.forEach(seat => {
+                const seatId = seat.id;
+                console.log('重置对话者座位样式：', seatId);
+                
+                const seatElement = document.getElementById(seatId);
+                if (seatElement) {
+                    const passengerElement = seatElement.querySelector('.passenger');
+                    if (passengerElement) {
+                        passengerElement.style.backgroundColor = '#000';
+                        passengerElement.style.boxShadow = 'none';
+                        passengerElement.classList.remove('chatting');
+                    }
+                }
+            });
+            
+            passengerSystem.chatSystem.activeChatters = [];
+            passengerSystem.chatSystem.isChattingActive = false;
+            console.log('对话已停用，chattedSeats大小:', passengerSystem.chatSystem.chattedSeats.size);
+        }, 150); // 等待动画完成
+    }
+}
+
+// 检查是否可以触发对话
+function checkForConversation(deltaTime) {
+    // 如果已经有对话在进行，更新计时器
+    if (passengerSystem.chatSystem.isChattingActive) {
+        passengerSystem.chatSystem.chatTimer += deltaTime;
+        
+        // 如果当前句子对话时间结束，显示下一句或结束对话
+        if (passengerSystem.chatSystem.chatTimer >= passengerSystem.chatSystem.chatDuration) {
+            showCurrentDialogueMessage();
+        }
+        return;
+    }
+    
+    // 检查是否还有未参与对话的座位对
+    const seatPairs = [
+        ["seat-1-1-1", "seat-1-1-2"],
+        ["seat-2-1-1", "seat-2-1-2"],
+        ["seat-4-1-1", "seat-4-1-2"],
+        ["seat-5-1-1", "seat-5-1-2"]
+    ];
+    
+    let hasAvailablePairs = false;
+    for (const pair of seatPairs) {
+        const seat1 = seatSystem.seats.find(s => s.id === pair[0]);
+        const seat2 = seatSystem.seats.find(s => s.id === pair[1]);
+        
+        // 检查是否有未参与对话且被占用的座位对
+        if (seat1 && seat2 && 
+            seat1.occupied && seat2.occupied && 
+            !passengerSystem.chatSystem.chattedSeats.has(seat1.id) && 
+            !passengerSystem.chatSystem.chattedSeats.has(seat2.id)) {
+            hasAvailablePairs = true;
+            break;
+        }
+    }
+    
+    // 如果没有可用的座位对，不触发对话
+    if (!hasAvailablePairs) {
+        return;
+    }
+    
+    // 随机触发对话的概率检查
+    if (Math.random() < passengerSystem.chatSystem.chatProbability * deltaTime) {
+        console.log('尝试触发对话，当前chattedSeats大小:', passengerSystem.chatSystem.chattedSeats.size);
+        
+        // 寻找同排可能对话的乘客
+        const possibleChatters = findPotentialChatters();
+        console.log('找到可能对话乘客数量：', possibleChatters.length);
+        
+        if (possibleChatters.length >= 2) {
+            // 因为我们按座位对获取的乘客，所以必须成对选择
+            const pairCount = Math.floor(possibleChatters.length / 2);
+            const pairIndex = Math.floor(Math.random() * pairCount);
+            
+            // 选择一对乘客（相邻索引）
+            const chatter1 = possibleChatters[pairIndex * 2];
+            const chatter2 = possibleChatters[pairIndex * 2 + 1];
+            
+            console.log('选择对话的座位：', chatter1.id, chatter2.id);
+            console.log('这些座位是否已经参与过对话：', 
+                passengerSystem.chatSystem.chattedSeats.has(chatter1.id), 
+                passengerSystem.chatSystem.chattedSeats.has(chatter2.id));
+            
+            // 将这些座位设置为正在对话状态
+            passengerSystem.chatSystem.activeChatters = [chatter1, chatter2];
+            
+            // 高亮显示正在对话的乘客
+            highlightChatters([chatter1, chatter2]);
+            
+            // 获取随机对话内容
+            const dialogueContent = getRandomConversation();
+            console.log('选择的对话内容：', dialogueContent);
+            passengerSystem.chatSystem.currentDialogue = dialogueContent;
+            passengerSystem.chatSystem.currentDialogueIndex = 0;
+            
+            // 显示第一句对话
+            showCurrentDialogueMessage();
+            
+            // 设置对话状态
+            passengerSystem.chatSystem.isChattingActive = true;
+        }
+    }
+}
+
+// 查找可能对话的乘客（同一排双人座的乘客）
+function findPotentialChatters() {
+    const chatters = [];
+    
+    // 检查每一排的左侧双人座
+    const seatPairs = [
+        ["seat-1-1-1", "seat-1-1-2"],
+        ["seat-2-1-1", "seat-2-1-2"],
+        ["seat-4-1-1", "seat-4-1-2"],
+        ["seat-5-1-1", "seat-5-1-2"]
+    ];
+    
+    console.log('开始查找可能对话的乘客，当前乘客总数：', passengerSystem.passengers.length);
+    console.log('已参与过对话的座位数：', passengerSystem.chatSystem.chattedSeats.size);
+    console.log('已参与过对话的座位：', Array.from(passengerSystem.chatSystem.chattedSeats));
+    
+    for (const pair of seatPairs) {
+        const seat1 = seatSystem.seats.find(s => s.id === pair[0]);
+        const seat2 = seatSystem.seats.find(s => s.id === pair[1]);
+        
+        console.log(`检查座位对: ${pair[0]}, ${pair[1]}`);
+        console.log('座位1状态:', seat1 ? `找到，占用=${seat1.occupied}` : '未找到');
+        console.log('座位2状态:', seat2 ? `找到，占用=${seat2.occupied}` : '未找到');
+        console.log('座位1已参与对话:', passengerSystem.chatSystem.chattedSeats.has(pair[0]));
+        console.log('座位2已参与对话:', passengerSystem.chatSystem.chattedSeats.has(pair[1]));
+        
+        // 检查是否有效座位对（两个座位都被占用且都未参与过对话）
+        if (seat1 && seat2 && 
+            seat1.occupied && seat2.occupied && 
+            !passengerSystem.chatSystem.chattedSeats.has(seat1.id) && 
+            !passengerSystem.chatSystem.chattedSeats.has(seat2.id)) {
+            
+            console.log('找到可能对话的乘客对：', seat1.id, seat2.id);
+            chatters.push(seat1);
+            chatters.push(seat2);
+        }
+    }
+    
+    return chatters;
+}
+
+// 高亮显示正在对话的乘客
+function highlightChatters(chatters) {
+    console.log('开始高亮乘客，数量：', chatters.length);
+    
+    chatters.forEach(seat => {
+        const seatId = seat.id;
+        console.log('正在高亮座位ID：', seatId);
+        
+        const seatElement = document.getElementById(seatId);
+        if (seatElement) {
+            console.log('找到座位元素：', seatId);
+            const passengerElement = seatElement.querySelector('.passenger');
+            
+            if (passengerElement) {
+                console.log('找到乘客元素，直接设置样式');
+                // 使用style直接设置样式，而不是依赖CSS类
+                passengerElement.style.backgroundColor = '#fff';
+                passengerElement.style.boxShadow = '0 0 5px rgba(255,255,255,0.8)';
+                
+                // 同时添加chatting类以保持一致性
+                passengerElement.classList.add('chatting');
+            } else {
+                console.error('未找到乘客元素！座位ID:', seatId);
+            }
+        } else {
+            console.error('未找到座位元素! ID:', seatId);
+        }
+    });
+}
+
+// 获取随机对话内容
+function getRandomConversation() {
+    const conversations = [
+        [
+            "大叔：今年的麦子看着长得不错啊。",
+            "眼镜男：是啊，天公作美，最近雨水足，咱们庄上人都盼着个好收成呢。",
+            "大叔：可不咋地！收成好，咱们庄上的娃娃们读书也就有着落了。"
+        ],
+        [
+            "阿姨：小伙子，你是进城打工的吧？",
+            "男青年：对，婶儿，在城里工厂干活，趁着这几天厂里放假才回家看看。",
+            "阿姨：好啊，出门在外要多注意身体，挣钱虽重要，也不能亏待了自己。"
+        ],
+        [
+            "老太太：丫头，这么早就搭车去镇上啊？",
+            "年轻姑娘：奶奶，我上学去，今天学校开运动会呢。",
+            "老太太：那得吃好饭，别空着肚子跑。奶奶这有饼，给你拿块垫垫。"
+        ],
+        [
+            "大叔：听说咱们村东头那桥，乡里要拨款修了。",
+            "青年农民：是啊，大叔，以后去镇上就方便了，不用绕那么远。",
+            "大叔：可不，就盼着修好了，乡亲们赶集赶会也能早回家了。"
+        ],
+        [
+            "中年妇女：哎呀，柱子媳妇，我听说你家闺女定亲了？",
+            "柱子媳妇：嗯，可不嘛，下个月初八过礼呢，你到时候可得过来坐坐！",
+            "中年妇女：那是自然，邻里街坊，红白喜事不就图个热闹嘛。"
+        ],
+        [
+            "眼镜男：大爷，你家孙子成绩怎么样？",
+            "老爷爷：马马虎虎吧，这娃儿贪玩。不过我也不逼他，只要人正派，比啥都强。",
+            "眼镜男：大爷，您想得真开明啊！"
+        ],
+        [
+            "大娘：哟，小姑娘，感冒还没好？",
+            "年轻姑娘：好多了，大娘，诊所的大夫给的药挺管用。",
+            "大娘：那就好，别看感冒小事，拖久了也麻烦。平时也得多注意穿戴。"
+        ],
+        [
+            "中年男人：老兄，听说昨天你家猪跑村长家菜园去了？",
+            "秃顶大叔：唉，别提了，一上午光道歉赔礼去了，赶明儿我得补篱笆了。",
+            "中年男人：哈哈，没事儿，下回我去帮你一起修！"
+        ],
+        [
+            "年轻姑娘：婶儿，今天赶集买啥去呀？",
+            "阿姨：给家里买些针头线脑，顺便给娃娃捎点糖果。",
+            "年轻姑娘：赶集就是热闹，我也想去看看花布，想自己做条裙子。"
+        ],
+        [
+            "胖大嫂：妹子，我瞅你家孩子可真懂事，见人都叫人。",
+            "年轻妈妈：哪啊，这娃在家可淘气了，没少挨他爸揍！",
+            "胖大嫂：小孩淘气点是福气呢！我家娃倒乖得紧，我还担心长大了吃亏呢！"
+        ],
+        [
+            "老汉：二娃，地里的活儿干得咋样了？",
+            "壮小伙：差不多了，就差最后一片玉米了，估计再忙一天就能完。",
+            "老汉：成，累了到家来歇歇，婶儿给你蒸了新包子。"
+        ],
+        [
+            "老大爷：闺女，我听你爸腿摔了，咋样了？",
+            "年轻姑娘：好多了，幸亏邻里帮忙，要不我一人还真照顾不过来。",
+            "老大爷：远亲不如近邻，这话一点不假，有啥事你尽管吱声。"
+        ],
+        [
+            "青年农民：刚才村里广播说，后天镇上有电影看！",
+            "戴帽子大叔：真的吗？上回放的那个《少林寺》我可是看了三遍，这次放啥？",
+            "青年农民：《地道战》，经典老片儿，值得再看一回！"
+        ],
+        [
+            "阿姨：你们家新买的牛养得咋样？",
+            "瘦大叔：还行，挺听话的，就是吃得多。刚才还牵出去遛了遛。",
+            "阿姨：牲口壮实了，来年春耕就省事不少！"
+        ],
+        [
+            "年轻妈妈：婶儿，你编的箩筐真好看，赶集卖得咋样？",
+            "手巧婶婶：还成，回头婶给你家送一个，给娃娃装书本正合适。",
+            "年轻妈妈：婶儿，你人真好！"
+        ],
+        [
+            "眼镜青年：大娘，你家院子里那菜咋种的，绿油油一大片，长势真好。",
+            "大娘：没啥诀窍，勤浇水勤施肥。回头我给你送些菜籽过去，你自己试试。"
+        ],
+        [
+            "中年男人：嫂子，我听你家二宝满月了？",
+            "大嫂：可不是么，刚办完满月酒，你咋没过来喝两盅？",
+            "中年男人：哎呀，这两天地里活儿实在走不开，改天我再登门去看看娃。"
+        ],
+        [
+            "青年：师傅，听说你补鞋手艺好，活儿都干到镇上去了？",
+            "补鞋匠：唉，手艺一般，就是讲个实在，没别的秘诀。",
+            "青年：您太谦虚啦，镇上人都说您的手艺好着呢！"
+        ],
+        [
+            "草帽大叔：昨天河里钓鱼去啦？",
+            "年轻小伙：去了，大叔，钓了半天就一条小鲫鱼，还被家里猫叼走了。",
+            "草帽大叔：哈哈，那猫倒是有口福，比你还会钓鱼呢！"
+        ],
+        [
+            "老爷爷：小伙子，你骑的这自行车瞅着挺新鲜，是新买的？",
+            "男青年：大爷，这是二手的，前几天在集市淘来的，自己刷的漆。",
+            "老爷爷：好，有手艺，能干的年轻人走哪都吃香！"
+        ],
+        [
+            "年轻姑娘：叔，您看这路边的油菜花开得真好看！",
+            "大叔：嗯，庄稼好了，风景也跟着好，咱农村的景色不比城里差！",
+            "年轻姑娘：是啊，我上次带城里的同学来家玩，他们都舍不得走呢。"
+        ],
+        [
+            "阿姨：孩子，新书包真好看，是妈妈缝的？",
+            "小学生：嗯，是娘用旧衣服做的，说省下的钱给我买课本。",
+            "阿姨：你娘可真巧，回头婶儿给你几个铅笔本，好好念书哈。"
+        ],
+        [
+            "中年妇女：我看你家院里养的鸡鸭挺多，平时费事不？",
+            "胖婶：倒不费啥事，就是得看着点黄鼠狼，这东西可精了。",
+            "中年妇女：哈哈，可不咋地，防黄鼠狼跟防贼似的。"
+        ],
+        [
+            "眼镜青年：大伯，这秧苗种多久了，看着长势不错啊。",
+            "老伯：种了快俩月了，今儿天晴，我专门去田里看了看，估摸着秋天能丰收。",
+            "眼镜青年：真好，到时候咱庄上又是一片热闹景象。"
+        ],
+        [
+            "扇扇子大娘：这天儿可真热，晚上你们村头还纳凉不？",
+            "青年妇女：还纳呢，每晚可热闹了，老人唠嗑，孩子们玩捉迷藏，热天儿也过得舒心。",
+            "扇扇子大娘：有伴儿闲话，比啥风扇都管用。"
+        ],
+        [
+            "瘦大叔：嫂子，你家灶上的柴火够用不？要是不够，我帮你送点过去。",
+            "胖大嫂：够用呢，你兄弟前两天刚打了几捆柴，后院堆得满满的。",
+            "瘦大叔：成，不够记得招呼一声。"
+        ],
+        [
+            "老奶奶：你们年轻人赶上好时候了，晚上有电灯，我年轻那会儿煤油灯晃得眼睛疼。",
+            "女青年：奶奶，您那时候虽然灯光暗点，可日子肯定也很温暖啊。",
+            "老奶奶：哈哈，这话倒是真的，人心齐，煤油灯也照得亮堂！"
+        ],
+        [
+            "年轻姑娘：婶儿，听说你会裁衣服，教教我呗？",
+            "巧手婶婶：没问题，回头来家里，手艺这东西，多学一样，以后日子就好过一点。",
+            "年轻姑娘：婶儿真好，我明天就去！"
+        ],
+        [
+            "中年男人：现在村里的娃娃们天天早晨还做广播操吧？",
+            "眼镜青年：做着呢！早上六点半准时响，连我这老胳膊老腿的，听见广播也想活动活动。",
+            "中年男人：哈哈，一起锻炼，咱庄的精神气儿就起来了！"
+        ],
+        [
+            "胖大叔：桂花嫂，今年中秋你家还做月饼不？",
+            "桂花嫂：做呀，早订了好多，都是邻里街坊的，我寻思今年再添点馅儿，大家尝个新鲜。",
+            "胖大叔：那我可提前预定几个了，你家月饼味道，吃了一年还惦记呢。"
+        ]
+    ];
+    
+    return conversations[Math.floor(Math.random() * conversations.length)];
+}
+
+// 显示当前对话句子
+function showCurrentDialogueMessage() {
+    const currentDialogue = passengerSystem.chatSystem.currentDialogue;
+    const currentIndex = passengerSystem.chatSystem.currentDialogueIndex;
+    
+    if (currentDialogue && currentIndex < currentDialogue.length) {
+        const message = currentDialogue[currentIndex];
+        showChatBubble(message);
+        
+        // 如果是对话的第一句，将整个对话添加到历史记录
+        if (currentIndex === 0) {
+            passengerSystem.chatHistory.unshift([...currentDialogue]); // 使用unshift添加到开头
+            // 更新按钮文本
+            const storyButton = document.getElementById('passenger-story-btn');
+            if (storyButton) {
+                storyButton.innerHTML = `田园轶事: ${passengerSystem.chatHistory.length}`;
+            }
+        }
+        
+        // 更新对话索引，准备显示下一句
+        passengerSystem.chatSystem.currentDialogueIndex++;
+        // 重置对话计时器
+        passengerSystem.chatSystem.chatTimer = 0;
+    } else {
+        // 所有对话句子都已显示完，结束对话
+        console.log('对话完成，准备结束对话');
+        hideChatBubble();
+        
+        // 将当前对话的乘客添加到已对话集合中
+        console.log('当前活跃对话者数量:', passengerSystem.chatSystem.activeChatters.length);
+        passengerSystem.chatSystem.activeChatters.forEach(seat => {
+            console.log(`将座位 ${seat.id} 标记为已参与过对话`);
+            passengerSystem.chatSystem.chattedSeats.add(seat.id);
+        });
+        
+        // 更新测试对话按钮文本
+        updateTestChatButtonText();
+        
+        // 完全重置对话状态
+        console.log('重置对话状态');
+        passengerSystem.chatSystem.currentDialogue = null;
+        passengerSystem.chatSystem.currentDialogueIndex = 0;
+        passengerSystem.chatSystem.isChattingActive = false;
+        
+        console.log('对话状态已重置，chattedSeats集合大小:', passengerSystem.chatSystem.chattedSeats.size);
+        console.log('chattedSeats包含的座位ID:', Array.from(passengerSystem.chatSystem.chattedSeats));
+    }
+}
+
+// 更新乘客和路人系统
+function updatePassengerSystem(deltaTime) {
+    // 创建初始的下车提示元素
+    if (!passengerSystem.notificationElement) {
+        createPassengerNotification();
+    }
+    
+    // 创建对话气泡
+    if (!passengerSystem.chatSystem.chatBubbleElement) {
+        createChatBubble();
+    }
+    
+    // 确保座位系统已初始化
+    if (!seatSystem.initialized) {
+        seatSystem.initializeSeats();
+        seatSystem.initialized = true;
+    }
+    
+    // 更新到站乘客数量显示
+    if (passengerSystem.passengerCountElement) {
+        passengerSystem.passengerCountElement.innerHTML = `到站人数: ${passengerSystem.arrivedCount}`;
+    }
+    
+    // 检查是否触发乘客对话
+    checkForConversation(deltaTime);
+    
+    // 更新巴士运动时间计数
+    if (busAnimation.isMoving && busAnimation.currentSpeedFactor > 0.5) {
+        passengerSystem.movingTime += deltaTime;
+        
+        // 为每个在车上的乘客更新计时器
+        passengerSystem.passengers.forEach(passenger => {
+            if (passenger.remainingTime > 0) {
+                passenger.remainingTime -= deltaTime;
+                
+                // 如果计时器归零，增加等待下车的乘客数量
+                if (passenger.remainingTime <= 0 && !passenger.isWaiting) {
+                    // 检查该乘客是否正在对话中
+                    const seatId = passenger.seatId;
+                    const isChattingNow = passengerSystem.chatSystem.isChattingActive && 
+                                         passengerSystem.chatSystem.activeChatters.some(seat => seat.id === seatId);
+                    
+                    // 只有不在对话中的乘客才会被标记为等待下车
+                    if (!isChattingNow) {
+                        passenger.isWaiting = true;
+                        passengerSystem.waitingCount++;
+                        
+                        // 显示下车提示
+                        showPassengerNotification();
+                    }
+                }
+            }
+        });
+        
+        // 只有当巴士持续运动超过10秒后，才开始生成路人
+        if (passengerSystem.movingTime >= 10) {
+            // 检查是否需要生成新的路人
+            passengerSystem.pedestrianSpawnTimer += deltaTime;
+            if (passengerSystem.pedestrianSpawnTimer >= passengerSystem.pedestrianSpawnInterval && window.createPedestrian) {
+                spawnPedestrians();
+                passengerSystem.pedestrianSpawnTimer = 0;
+            }
+        }
+    } else {
+        // 如果巴士停止，重置连续运动时间计数
+        if (!busAnimation.isMoving && busAnimation.currentSpeedFactor < 0.01) {
+            passengerSystem.movingTime = 0;
+        }
+    }
+    
+    // 如果巴士停止，处理乘客下车
+    if (!busAnimation.isMoving && busAnimation.currentSpeedFactor < 0.01 && passengerSystem.waitingCount > 0) {
+        // 筛选出等待下车的乘客，但跳过正在对话中的乘客
+        const leavingPassengers = passengerSystem.passengers.filter(p => {
+            if (!p.isWaiting) return false;
+            
+            // 检查乘客是否正在对话
+            const seatId = p.seatId;
+            const isChattingNow = passengerSystem.chatSystem.isChattingActive && 
+                                 passengerSystem.chatSystem.activeChatters.some(seat => seat.id === seatId);
+            
+            // 如果正在对话，暂时不让其下车，但保留下车状态
+            if (isChattingNow) {
+                return false;
+            }
+            
+            return true;
+        });
+        
+        // 处理乘客下车
+        if (leavingPassengers.length > 0) {
+            console.log(`${leavingPassengers.length} 个乘客下车`);
+            
+            // 增加已下车乘客计数
+            passengerSystem.arrivedCount += leavingPassengers.length;
+            
+            // 在巴士位置创建下车的路人
+            if (window.createPedestrian) {
+                leavingPassengers.forEach((passenger, index) => {
+                    // 在巴士位置创建路人，并设置为不会上车
+                    window.createPedestrian(bus.position.x + index * 0.5, false);
+                    
+                    // 释放座位
+                    if (passenger.seatId) {
+                        seatSystem.freeSeat(passenger.seatId);
+                    }
+                });
+            }
+            
+            // 移除下车的乘客
+            passengerSystem.passengers = passengerSystem.passengers.filter(p => !p.isWaiting);
+            
+            // 重置等待计数
+            passengerSystem.waitingCount = 0;
+            
+            // 隐藏下车提示
+            hidePassengerNotification();
+        }
+    }
+    
+    // 更新路人位置和行为
+    updatePedestrians(deltaTime);
+}
+
+// 显示对话历史
+function showChatHistory() {
+    // 创建历史记录容器
+    const historyContainer = document.createElement('div');
+    historyContainer.id = 'chat-history-container';
+    historyContainer.style.cssText = `
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        background-color: rgba(255, 255, 255, 0.95);
+        padding: 20px;
+        border-radius: 15px;
+        width: 80%;
+        max-width: 600px;
+        max-height: 80vh;
+        overflow-y: auto;
+        z-index: 2000;
+        box-shadow: 0 0 20px rgba(0,0,0,0.2);
+    `;
+    
+    // 创建标题
+    const title = document.createElement('h2');
+    title.innerHTML = `田园轶事 (${passengerSystem.chatHistory.length})`;
+    title.style.cssText = `
+        text-align: center;
+        margin-bottom: 20px;
+        color: #333;
+    `;
+    historyContainer.appendChild(title);
+    
+    // 如果没有历史记录
+    if (passengerSystem.chatHistory.length === 0) {
+        const emptyMessage = document.createElement('p');
+        emptyMessage.innerHTML = '坐在一起的乘客会相互聊天...';
+        emptyMessage.style.cssText = `
+            text-align: center;
+            color: #666;
+            font-style: italic;
+        `;
+        historyContainer.appendChild(emptyMessage);
+    } else {
+        // 显示历史记录（已经是倒序排列）
+        passengerSystem.chatHistory.forEach((conversation, index) => {
+            // 为每个对话生成概括性标题和一句话纪事
+            const title = generateConversationTitle(conversation);
+            const summary = generateConversationSummary(conversation);
+            
+            const conversationDiv = document.createElement('div');
+            conversationDiv.style.cssText = `
+                margin-bottom: 20px;
+                padding: 15px;
+                background-color: #f5f5f5;
+                border-radius: 10px;
+            `;
+            
+            // 显示概括性标题
+            const conversationTitle = document.createElement('h3');
+            conversationTitle.innerHTML = title;
+            conversationTitle.style.cssText = `
+                margin-bottom: 10px;
+                color: #333;
+                font-weight: bold;
+            `;
+            conversationDiv.appendChild(conversationTitle);
+            
+            // 显示一句话纪事
+            const conversationSummary = document.createElement('p');
+            conversationSummary.innerHTML = summary;
+            conversationSummary.style.cssText = `
+                margin: 10px 0;
+                color: #555;
+                font-style: italic;
+            `;
+            conversationDiv.appendChild(conversationSummary);
+            
+            // 添加"查看原对话"按钮
+            const viewOriginalButton = document.createElement('button');
+            viewOriginalButton.innerHTML = '查看原对话';
+            viewOriginalButton.style.cssText = `
+                padding: 5px 10px;
+                background-color: #3498db;
+                color: white;
+                border: none;
+                border-radius: 10px;
+                cursor: pointer;
+                font-size: 12px;
+                margin-top: 5px;
+            `;
+            
+            // 创建原对话内容的容器（初始隐藏）
+            const originalConversation = document.createElement('div');
+            originalConversation.style.cssText = `
+                margin-top: 10px;
+                padding: 10px;
+                background-color: #fff;
+                border-radius: 8px;
+                display: none;
+            `;
+            
+            // 添加原对话内容
+            conversation.forEach(line => {
+                const message = document.createElement('p');
+                message.innerHTML = line;
+                message.style.cssText = `
+                    margin: 5px 0;
+                    color: #555;
+                `;
+                originalConversation.appendChild(message);
+            });
+            
+            // 添加点击事件来切换显示/隐藏原对话
+            viewOriginalButton.addEventListener('click', () => {
+                if (originalConversation.style.display === 'none') {
+                    originalConversation.style.display = 'block';
+                    viewOriginalButton.innerHTML = '隐藏原对话';
+                } else {
+                    originalConversation.style.display = 'none';
+                    viewOriginalButton.innerHTML = '查看原对话';
+                }
+            });
+            
+            conversationDiv.appendChild(viewOriginalButton);
+            conversationDiv.appendChild(originalConversation);
+            
+            historyContainer.appendChild(conversationDiv);
+        });
+    }
+    
+    // 创建关闭按钮
+    const closeButton = document.createElement('button');
+    closeButton.innerHTML = '关闭';
+    closeButton.style.cssText = `
+        display: block;
+        margin: 20px auto 0;
+        padding: 8px 20px;
+        background-color: #e74c3c;
+        color: white;
+        border: none;
+        border-radius: 15px;
+        cursor: pointer;
+        font-weight: bold;
+    `;
+    
+    closeButton.addEventListener('click', () => {
+        document.body.removeChild(historyContainer);
+    });
+    
+    historyContainer.appendChild(closeButton);
+    
+    // 添加到页面
+    document.body.appendChild(historyContainer);
+}
+
+// 根据对话内容生成概括性标题
+function generateConversationTitle(conversation) {
+    // 获取对话中的主要角色
+    const speakers = extractSpeakers(conversation);
+    
+    // 根据对话内容确定主题
+    const topic = determineConversationTopic(conversation);
+    
+    return `${speakers.join("与")}的${topic}`;
+}
+
+// 根据对话内容生成一句话纪事
+function generateConversationSummary(conversation) {
+    // 提取对话主要内容并概括成一句话
+    const speakers = extractSpeakers(conversation);
+    const content = summarizeContent(conversation);
+    
+    return `${speakers[0]}和${speakers[1]}在公交车上${content}。`;
+}
+
+// 从对话中提取说话者
+function extractSpeakers(conversation) {
+    const speakers = [];
+    
+    conversation.forEach(line => {
+        // 分离说话者和对话内容
+        const colonIndex = line.indexOf('：');
+        if (colonIndex > 0) {
+            const speaker = line.substring(0, colonIndex);
+            if (!speakers.includes(speaker)) {
+                speakers.push(speaker);
+            }
+        }
+    });
+    
+    return speakers;
+}
+
+// 确定对话主题
+function determineConversationTopic(conversation) {
+    // 根据对话内容中的关键词确定主题
+    const fullText = conversation.join(' ');
+    
+    if (fullText.includes('麦子') || fullText.includes('庄稼') || fullText.includes('收成') || fullText.includes('田') || fullText.includes('地')) {
+        return '农事交流';
+    } else if (fullText.includes('学') || fullText.includes('成绩') || fullText.includes('读书') || fullText.includes('书包')) {
+        return '教育话题';
+    } else if (fullText.includes('孩子') || fullText.includes('娃') || fullText.includes('家') || fullText.includes('爸') || fullText.includes('妈')) {
+        return '家庭闲谈';
+    } else if (fullText.includes('城里') || fullText.includes('镇上') || fullText.includes('进城')) {
+        return '城乡见闻';
+    } else if (fullText.includes('电影') || fullText.includes('广播') || fullText.includes('纳凉')) {
+        return '文娱话题';
+    } else if (fullText.includes('手艺') || fullText.includes('缝') || fullText.includes('补')) {
+        return '手艺分享';
+    } else if (fullText.includes('病') || fullText.includes('感冒') || fullText.includes('身体')) {
+        return '健康关怀';
+    } else if (fullText.includes('鸡') || fullText.includes('鸭') || fullText.includes('猪') || fullText.includes('牛')) {
+        return '牲畜讨论';
+    } else if (fullText.includes('风景') || fullText.includes('花') || fullText.includes('景色')) {
+        return '景色欣赏';
+    } else if (fullText.includes('菜') || fullText.includes('吃') || fullText.includes('饭') || fullText.includes('包子')) {
+        return '饮食交流';
+    } else {
+        return '温馨对话';
+    }
+}
+
+// 概括对话内容
+function summarizeContent(conversation) {
+    // 根据关键词和对话内容生成概括性描述
+    const fullText = conversation.join(' ');
+    
+    if (fullText.includes('麦子') || fullText.includes('收成')) {
+        return '交流了今年麦子的收成和庄稼的情况';
+    } else if (fullText.includes('打工') || fullText.includes('工厂')) {
+        return '讨论了进城打工的经历和注意事项';
+    } else if (fullText.includes('上学') || fullText.includes('学校')) {
+        return '聊了学校生活和学习情况';
+    } else if (fullText.includes('村东头') || fullText.includes('桥')) {
+        return '谈论了村里即将修建的桥梁';
+    } else if (fullText.includes('定亲') || fullText.includes('闺女')) {
+        return '分享了家里闺女定亲的喜事';
+    } else if (fullText.includes('孙子') || fullText.includes('成绩')) {
+        return '交流了孙子的学习成绩和教育理念';
+    } else if (fullText.includes('感冒')) {
+        return '关心了对方的感冒恢复情况';
+    } else if (fullText.includes('猪') || fullText.includes('菜园')) {
+        return '谈论了家里猪跑到村长菜园的趣事';
+    } else if (fullText.includes('赶集')) {
+        return '交流了赶集的计划和期待';
+    } else if (fullText.includes('孩子') || fullText.includes('淘气')) {
+        return '讨论了孩子的性格和教育问题';
+    } else if (fullText.includes('地里') || fullText.includes('玉米')) {
+        return '聊起了地里的农活和收成情况';
+    } else if (fullText.includes('腿摔了')) {
+        return '关心了家人的伤势和邻里互助';
+    } else if (fullText.includes('电影')) {
+        return '分享了对即将放映的电影的期待';
+    } else if (fullText.includes('牛')) {
+        return '交流了新买的牛的饲养情况';
+    } else if (fullText.includes('箩筐') || fullText.includes('赶集卖')) {
+        return '赞美了对方编制的箩筐手艺';
+    } else if (fullText.includes('菜')) {
+        return '交流了种菜的经验和心得';
+    } else if (fullText.includes('二宝') || fullText.includes('满月')) {
+        return '谈论了孩子满月的喜事';
+    } else if (fullText.includes('补鞋')) {
+        return '称赞了对方的补鞋手艺';
+    } else if (fullText.includes('钓鱼')) {
+        return '分享了钓鱼的趣事和经历';
+    } else if (fullText.includes('自行车')) {
+        return '交流了自行车的购买和维修经验';
+    } else if (fullText.includes('油菜花')) {
+        return '欣赏了路边美丽的油菜花';
+    } else if (fullText.includes('书包')) {
+        return '夸赞了手工制作的新书包';
+    } else if (fullText.includes('鸡鸭') || fullText.includes('黄鼠狼')) {
+        return '交流了养殖家禽的经验和注意事项';
+    } else if (fullText.includes('秧苗')) {
+        return '交流了秧苗的生长情况和丰收期待';
+    } else if (fullText.includes('纳凉')) {
+        return '讨论了村头纳凉的热闹景象';
+    } else if (fullText.includes('柴火')) {
+        return '关心了家中柴火的储备情况';
+    } else if (fullText.includes('电灯') || fullText.includes('煤油灯')) {
+        return '感叹了新旧时代生活的变化';
+    } else if (fullText.includes('裁衣服')) {
+        return '交流了裁衣服的手艺经验';
+    } else if (fullText.includes('广播操')) {
+        return '聊起了村里的早晨广播操活动';
+    } else if (fullText.includes('月饼') || fullText.includes('中秋')) {
+        return '讨论了中秋节月饼制作和分享';
+    } else {
+        return '分享了生活中的温馨小事';
+    }
+}
