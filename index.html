@@ -23,7 +23,7 @@
             left: 0;
             width: 100%;
             height: 100%;
-            background: linear-gradient(to bottom, #87CEEB, #3498db);
+            background: linear-gradient(to bottom, #d3b491, #b08968);
             display: flex;
             flex-direction: column;
             justify-content: center;
@@ -78,18 +78,22 @@
             width: 100%;
             display: flex;
             justify-content: center;
+            gap: 15px; /* 添加按钮间间距 */
             z-index: 1000;
         }
 
-        #toggle-bus-btn {
+        #toggle-bus-btn, #add-passenger-btn, #test-chat-btn {
             padding: 10px 20px;
             font-size: 18px;
             border-radius: 20px;
             border: none;
-            background-color: rgba(39, 174, 96, 0.7);
             color: white;
             cursor: pointer;
             transition: all 0.3s;
+        }
+
+        #toggle-bus-btn {
+            background-color: rgba(39, 174, 96, 0.7);
         }
 
         #toggle-bus-btn:hover {
@@ -99,6 +103,24 @@
 
         #toggle-bus-btn.stopped {
             background-color: rgba(231, 76, 60, 0.7);
+        }
+
+        #add-passenger-btn {
+            background-color: rgba(52, 152, 219, 0.7);
+        }
+
+        #add-passenger-btn:hover {
+            background-color: rgba(52, 152, 219, 0.9);
+            transform: scale(1.05);
+        }
+
+        #test-chat-btn {
+            background-color: rgba(155, 89, 182, 0.7);
+        }
+
+        #test-chat-btn:hover {
+            background-color: rgba(155, 89, 182, 0.9);
+            transform: scale(1.05);
         }
         
         /* 添加公交座位顶视图样式 */
@@ -183,7 +205,7 @@
     <!-- 开始界面 -->
     <div id="start-screen">
         <h1>田园公交</h1>
-        <p>驾驶公交车穿越美丽乡村，管理乘客上下车，聆听旅途中的温馨对话，体验乡村公交司机的一天。</p>
+        <p>驾驶公交车穿越美丽乡村，探索田园轶事。 体验慢节奏的生活。</p>
         <button id="start-button">开始游戏</button>
     </div>
 
@@ -236,6 +258,8 @@
 
         <div id="control-panel">
             <button id="toggle-bus-btn">停车</button>
+            <button id="add-passenger-btn" style="display: none;">添加乘客</button>
+            <button id="test-chat-btn" style="display: none;">测试对话</button>
         </div>
     </div>
     
@@ -258,6 +282,29 @@
                 document.body.appendChild(mainScript);
                 
                 console.log('游戏开始，加载主脚本');
+                
+                // 确保按钮初始化
+                mainScript.onload = function() {
+                    console.log('主脚本加载完成，初始化按钮');
+                    // 如果main.js中有initializeBusButton函数，则调用它
+                    if (typeof initializeBusButton === 'function') {
+                        setTimeout(initializeBusButton, 300);
+                        
+                        // 确保座位系统初始化并添加初始乘客
+                        setTimeout(function() {
+                            // 确保座位系统已初始化
+                            if (!seatSystem.initialized) {
+                                seatSystem.initializeSeats();
+                                seatSystem.initialized = true;
+                            }
+                            
+                            // 初始化随机乘客
+                            if (typeof initializeRandomPassengers === 'function') {
+                                initializeRandomPassengers(6);
+                            }
+                        }, 500);
+                    }
+                };
             });
         });
     </script>

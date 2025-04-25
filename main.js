@@ -4,7 +4,7 @@ const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerH
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 
 renderer.setSize(window.innerWidth, window.innerHeight);
-renderer.setClearColor(0x87CEEB); // 天空蓝色背景
+renderer.setClearColor(0xd3b491); // 浅褐色背景
 document.body.appendChild(renderer.domElement);
 
 // 乘客管理相关变量
@@ -22,6 +22,7 @@ const passengerSystem = {
     notificationElement: null, // 下车提示元素引用
     passengerCountElement: null, // 乘客数量显示元素引用
     chatHistory: [],          // 存储已触发的对话历史
+    usedConversations: new Set(), // 存储已触发的对话内容的索引，避免重复
     chatSystem: {
         isChattingActive: false, // 是否有正在进行的对话
         chatProbability: 0.3,     // 每秒触发对话的概率（增加到0.3）
@@ -92,6 +93,10 @@ const seatSystem = {
             seat.occupied = false;
             seat.passenger = null;
             this.updateSeatVisual(seat.id, false);
+            
+            // 释放座位时也从对话集合中移除
+            releaseSeatFromChat(seatId);
+            
             return true;
         }
         return false;
@@ -132,6 +137,16 @@ const seatSystem = {
     
     initialized: false
 };
+
+// 从已参与对话的座位集合中移除指定座位ID
+function releaseSeatFromChat(seatId) {
+    if (passengerSystem.chatSystem.chattedSeats.has(seatId)) {
+        console.log(`将座位 ${seatId} 从已对话集合中移除`);
+        passengerSystem.chatSystem.chattedSeats.delete(seatId);
+        // 更新测试对话按钮文本
+        updateTestChatButtonText();
+    }
+}
 
 // 设置相机初始位置
 camera.position.set(0, 1.74, 9.85); // y = 10*sin(10°), z = 10*cos(10°)
@@ -206,7 +221,7 @@ const MAX_HOUSES = 5; // 最多同时存在的小屋数量
 
 // 图层信息及其z位置和移动速度
 const layers = [
-    { name: "img_bg6_sky", zPosition: -60, width: 1536/12, height: 586/12, speed: -0.002, y: 20, defaultSpeed: -0.002 },       // 最远的天空背景
+    { name: "img_bg6_sky", zPosition: -60, width: 1536/12, height: 586/12, speed: -0.002, y: 18, defaultSpeed: -0.002 },       // 最远的天空背景
     { name: "img_bg5_mountain", zPosition: -50, width: 60/1.5, height: 10/1.5, speed: -0.01, y: -6, defaultSpeed: -0.01 },  // 山脉
     { name: "img_bg4_house", zPosition: -15, width: 4, height: 2.5, speed: 0.01, y: -2.5, isHouse: true, defaultSpeed: 0.01 }, // 小屋层，位置在山脉和田野之间
     { name: "img_bg3_fields", zPosition: -34, width: 20*1.3, height: 50*1.3, speed: -0.02, y: -7.0, defaultSpeed: -0.02 },    // 田野，调整高度和位置
@@ -757,6 +772,9 @@ function updateTestChatButtonText() {
         } else {
             testChatBtn.textContent = '测试对话';
         }
+        
+        // 添加提示说明
+        testChatBtn.title = '点击触发乘客对话\n按住Shift键点击可重置所有乘客的对话状态\n按住Alt键点击可重置已使用的对话内容';
     }
 }
 
@@ -805,18 +823,70 @@ function addPassengerButtonClickHandler() {
 function testChatButtonClickHandler(event) {
     console.log('测试对话按钮被点击');
     
+    // 检查是否是按住Alt键（重置已使用对话内容）
+    if (event && event.altKey) {
+        // 重置已使用对话内容
+        passengerSystem.usedConversations.clear();
+        console.log('已重置所有对话内容使用记录');
+        alert('已重置对话内容使用记录，所有对话内容都可以再次触发。');
+        return;
+    }
+    
     // 检查是否是长按（按住Shift键）
     if (event && event.shiftKey) {
         // 长按重置所有已对话乘客的状态
         passengerSystem.chatSystem.chattedSeats.clear();
-        console.log('已重置所有乘客的对话状态');
+        
+        // 检查并修复已经被释放但仍标记为occupied的座位
+        seatSystem.seats.forEach(seat => {
+            const seatElement = document.getElementById(seat.id);
+            if (seatElement) {
+                const hasPassengerElement = !!seatElement.querySelector('.passenger');
+                // 如果座位状态与视觉不一致，修复它
+                if (seat.occupied !== hasPassengerElement) {
+                    console.log(`修复座位不一致: ${seat.id}, occupied=${seat.occupied}, 有乘客元素=${hasPassengerElement}`);
+                    seat.occupied = hasPassengerElement;
+                    if (!hasPassengerElement) {
+                        seat.passenger = null;
+                    }
+                }
+            }
+        });
+        
+        // 同步乘客数组与座位状态
+        passengerSystem.passengers = passengerSystem.passengers.filter(p => {
+            const seat = seatSystem.seats.find(s => s.id === p.seatId);
+            return seat && seat.occupied;
+        });
+        
+        console.log('已重置所有乘客的对话状态和座位');
         updateTestChatButtonText();
-        alert('已重置所有乘客的对话状态，现在所有乘客都可以再次对话');
+        alert('已重置所有乘客的对话状态和座位，修复了可能被锁定的座位。现在所有乘客都可以再次对话。');
         return;
     }
     
     // 如果当前有对话正在进行，先结束它
     if (passengerSystem.chatSystem.isChattingActive) {
+        // 先重置当前正在对话的乘客高亮样式
+        passengerSystem.chatSystem.activeChatters.forEach(seat => {
+            const seatId = seat.id;
+            console.log(`在测试对话中重置乘客样式：${seatId}`);
+            
+            const seatElement = document.getElementById(seatId);
+            if (seatElement) {
+                const passengerElement = seatElement.querySelector('.passenger');
+                if (passengerElement) {
+                    passengerElement.style.backgroundColor = '#000';
+                    passengerElement.style.boxShadow = 'none';
+                    passengerElement.classList.remove('chatting');
+                }
+            }
+        });
+        
+        // 清空活跃对话者列表
+        passengerSystem.chatSystem.activeChatters = [];
+        
+        // 然后隐藏对话气泡并重置状态
         hideChatBubble();
         passengerSystem.chatSystem.currentDialogue = null;
         passengerSystem.chatSystem.currentDialogueIndex = 0;
@@ -1240,31 +1310,9 @@ animate(0);
 // 创建下车提示UI
 function createPassengerNotification() {
     // 如果已经存在提示元素，则返回
-    if (passengerSystem.notificationElement) {
+    if (passengerSystem.passengerCountElement) {
         return;
     }
-    
-    // 创建提示元素
-    const notification = document.createElement('div');
-    notification.id = 'passenger-notification';
-    notification.innerHTML = '有乘客需要下车';
-    notification.style.cssText = `
-        position: fixed;
-        top: 20px;
-        left: 50%;
-        transform: translateX(-50%);
-        background-color: rgba(231, 76, 60, 0.8);
-        color: white;
-        padding: 10px 20px;
-        border-radius: 20px;
-        font-size: 16px;
-        font-weight: bold;
-        z-index: 1000;
-        display: none;
-    `;
-    
-    document.body.appendChild(notification);
-    passengerSystem.notificationElement = notification;
     
     // 创建到站乘客数量显示
     const passengerCountUI = document.createElement('div');
@@ -1273,7 +1321,7 @@ function createPassengerNotification() {
     passengerCountUI.style.cssText = `
         position: fixed;
         top: 20px;
-        right: 20px;
+        left: 20px;
         background-color: rgba(52, 152, 219, 0.8);
         color: white;
         padding: 8px 15px;
@@ -1289,10 +1337,10 @@ function createPassengerNotification() {
     // 创建乘客故事按钮
     const storyButton = document.createElement('button');
     storyButton.id = 'passenger-story-btn';
-    storyButton.innerHTML = '田园轶事: 0';
+    storyButton.innerHTML = '田园轶闻: 0';
     storyButton.style.cssText = `
         position: fixed;
-        top: 60px;
+        top: 20px;
         right: 20px;
         background-color: rgba(46, 204, 113, 0.8);
         color: white;
@@ -1323,22 +1371,19 @@ function createPassengerNotification() {
     document.body.appendChild(storyButton);
 }
 
-// 显示乘客下车提示
+// 显示乘客下车提示(已弃用，保留函数以兼容调用)
 function showPassengerNotification() {
-    if (!passengerSystem.notificationElement) {
+    if (!passengerSystem.passengerCountElement) {
         createPassengerNotification();
     }
-    
-    passengerSystem.notificationElement.style.display = 'block';
+    // 设置标志，表示有乘客等待下车
     passengerSystem.notificationShown = true;
 }
 
-// 隐藏乘客下车提示
+// 隐藏乘客下车提示(已弃用，保留函数以兼容调用)
 function hidePassengerNotification() {
-    if (passengerSystem.notificationElement) {
-        passengerSystem.notificationElement.style.display = 'none';
-        passengerSystem.notificationShown = false;
-    }
+    // 重置标志，表示没有乘客等待下车
+    passengerSystem.notificationShown = false;
 }
 
 // 生成路人
@@ -1524,28 +1569,39 @@ function hideChatBubble() {
         chatBubble.style.opacity = '0';
         chatBubble.style.transform = 'translate(-50%, -50%) scale(0.8)';
         
+        // 先执行重置乘客样式的操作，避免延时导致的问题
+        // 重置活跃对话者
+        passengerSystem.chatSystem.activeChatters.forEach(seat => {
+            const seatId = seat.id;
+            console.log('重置对话者座位样式：', seatId);
+            
+            const seatElement = document.getElementById(seatId);
+            if (seatElement) {
+                const passengerElement = seatElement.querySelector('.passenger');
+                if (passengerElement) {
+                    passengerElement.style.backgroundColor = '#000';
+                    passengerElement.style.boxShadow = 'none';
+                    passengerElement.classList.remove('chatting');
+                }
+            }
+        });
+        
+        // 标记对话已结束
+        const dialogueCompleted = passengerSystem.chatSystem.currentDialogue === null || 
+                                passengerSystem.chatSystem.currentDialogueIndex >= passengerSystem.chatSystem.currentDialogue.length;
+        
+        // 如果对话未完成，且存在活跃对话者，则不要将其添加到chattedSeats
+        if (!dialogueCompleted && passengerSystem.chatSystem.activeChatters.length > 0) {
+            console.log('对话被中止，不标记座位为已对话');
+        }
+        
+        // 清空活跃对话者数组并重置状态
+        passengerSystem.chatSystem.activeChatters = [];
+        passengerSystem.chatSystem.isChattingActive = false;
+        
         // 动画结束后隐藏元素
         setTimeout(() => {
             chatBubble.style.display = 'none';
-            
-            // 重置活跃对话者
-            passengerSystem.chatSystem.activeChatters.forEach(seat => {
-                const seatId = seat.id;
-                console.log('重置对话者座位样式：', seatId);
-                
-                const seatElement = document.getElementById(seatId);
-                if (seatElement) {
-                    const passengerElement = seatElement.querySelector('.passenger');
-                    if (passengerElement) {
-                        passengerElement.style.backgroundColor = '#000';
-                        passengerElement.style.boxShadow = 'none';
-                        passengerElement.classList.remove('chatting');
-                    }
-                }
-            });
-            
-            passengerSystem.chatSystem.activeChatters = [];
-            passengerSystem.chatSystem.isChattingActive = false;
             console.log('对话已停用，chattedSeats大小:', passengerSystem.chatSystem.chattedSeats.size);
         }, 150); // 等待动画完成
     }
@@ -1680,6 +1736,19 @@ function findPotentialChatters() {
 function highlightChatters(chatters) {
     console.log('开始高亮乘客，数量：', chatters.length);
     
+    // 先清除可能存在的所有高亮状态
+    // 查找所有带有chatting类的乘客元素
+    const chattingPassengers = document.querySelectorAll('.passenger.chatting');
+    if (chattingPassengers.length > 0) {
+        console.log('发现残留的高亮乘客，数量：', chattingPassengers.length);
+        chattingPassengers.forEach(element => {
+            element.style.backgroundColor = '#000';
+            element.style.boxShadow = 'none';
+            element.classList.remove('chatting');
+        });
+    }
+    
+    // 高亮新的对话乘客
     chatters.forEach(seat => {
         const seatId = seat.id;
         console.log('正在高亮座位ID：', seatId);
@@ -1706,77 +1775,83 @@ function highlightChatters(chatters) {
     });
 }
 
+// 动态获取对话总数量
+function getConversationsCount() {
+    return getRandomConversation(true);
+}
+
 // 获取随机对话内容
-function getRandomConversation() {
+function getRandomConversation(countOnly = false) {
     const conversations = [
         [
             "大叔：今年的麦子看着长得不错啊。",
-            "眼镜男：是啊，天公作美，最近雨水足，咱们庄上人都盼着个好收成呢。",
-            "大叔：可不咋地！收成好，咱们庄上的娃娃们读书也就有着落了。"
+            "眼镜男：天公作美，最近雨水足，咱们都盼着个好收成呢。",
+            "大叔：可不咋地！收成好，娃娃们读书也就有着落了。"
         ],
         [
             "阿姨：小伙子，你是进城打工的吧？",
-            "男青年：对，婶儿，在城里工厂干活，趁着这几天厂里放假才回家看看。",
-            "阿姨：好啊，出门在外要多注意身体，挣钱虽重要，也不能亏待了自己。"
+            "男青年：对，婶儿，趁着这几天厂里放假才回家看看。",
+            "阿姨：好啊，出门在外要多注意身体。"
         ],
         [
             "老太太：丫头，这么早就搭车去镇上啊？",
             "年轻姑娘：奶奶，我上学去，今天学校开运动会呢。",
-            "老太太：那得吃好饭，别空着肚子跑。奶奶这有饼，给你拿块垫垫。"
+            "老太太：那得吃好饭，奶奶这有饼，给你拿块垫垫。",
+            "年轻姑娘：谢谢奶奶，这饼可真香！"
         ],
         [
             "大叔：听说咱们村东头那桥，乡里要拨款修了。",
-            "青年农民：是啊，大叔，以后去镇上就方便了，不用绕那么远。",
-            "大叔：可不，就盼着修好了，乡亲们赶集赶会也能早回家了。"
+            "青年农民：是啊，以后去镇上就方便了。",
+            "大叔：就盼着修好了，乡亲们赶集赶会也能早回家了。"
         ],
         [
             "中年妇女：哎呀，柱子媳妇，我听说你家闺女定亲了？",
-            "柱子媳妇：嗯，可不嘛，下个月初八过礼呢，你到时候可得过来坐坐！",
-            "中年妇女：那是自然，邻里街坊，红白喜事不就图个热闹嘛。"
+            "柱子媳妇：可不嘛，下个月初八过礼呢，你到时候可得过来坐坐！",
+            "中年妇女：那是自然，一定要去的！"
         ],
         [
             "眼镜男：大爷，你家孙子成绩怎么样？",
-            "老爷爷：马马虎虎吧，这娃儿贪玩。不过我也不逼他，只要人正派，比啥都强。",
+            "老爷爷：马马虎虎吧，这娃儿贪玩，不过只要为人正直就行啦。",
             "眼镜男：大爷，您想得真开明啊！"
         ],
         [
             "大娘：哟，小姑娘，感冒还没好？",
             "年轻姑娘：好多了，大娘，诊所的大夫给的药挺管用。",
-            "大娘：那就好，别看感冒小事，拖久了也麻烦。平时也得多注意穿戴。"
+            "大娘：那就好，平时也得多注意穿戴。"
         ],
         [
             "中年男人：老兄，听说昨天你家猪跑村长家菜园去了？",
-            "秃顶大叔：唉，别提了，一上午光道歉赔礼去了，赶明儿我得补篱笆了。",
+            "秃顶大叔：唉，别提了，道歉赔礼了一上午，明儿还得补篱笆。",
             "中年男人：哈哈，没事儿，下回我去帮你一起修！"
         ],
         [
             "年轻姑娘：婶儿，今天赶集买啥去呀？",
             "阿姨：给家里买些针头线脑，顺便给娃娃捎点糖果。",
-            "年轻姑娘：赶集就是热闹，我也想去看看花布，想自己做条裙子。"
+            "年轻姑娘：我也想去看看花布，想自己做条裙子。"
         ],
         [
             "胖大嫂：妹子，我瞅你家孩子可真懂事，见人都叫人。",
             "年轻妈妈：哪啊，这娃在家可淘气了，没少挨他爸揍！",
-            "胖大嫂：小孩淘气点是福气呢！我家娃倒乖得紧，我还担心长大了吃亏呢！"
+            "胖大嫂：小孩淘气点是福气啊，不然长大了吃亏呢！"
         ],
         [
             "老汉：二娃，地里的活儿干得咋样了？",
-            "壮小伙：差不多了，就差最后一片玉米了，估计再忙一天就能完。",
-            "老汉：成，累了到家来歇歇，婶儿给你蒸了新包子。"
+            "壮小伙：差不多了，就差最后一片玉米了。",
+            "老汉：成，累了到家来歇歇，婶儿给你蒸包子。"
         ],
         [
-            "老大爷：闺女，我听你爸腿摔了，咋样了？",
-            "年轻姑娘：好多了，幸亏邻里帮忙，要不我一人还真照顾不过来。",
-            "老大爷：远亲不如近邻，这话一点不假，有啥事你尽管吱声。"
+            "老大爷：闺女，我听你爸腿摔了？",
+            "年轻姑娘：幸亏邻里帮忙，要不我一人还真照顾不过来。",
+            "老大爷：远亲不如近邻，有啥事你尽管吱声。"
         ],
         [
             "青年农民：刚才村里广播说，后天镇上有电影看！",
-            "戴帽子大叔：真的吗？上回放的那个《少林寺》我可是看了三遍，这次放啥？",
+            "戴帽子大叔：上回放的那个《少林寺》我可是看了三遍，这次放啥？",
             "青年农民：《地道战》，经典老片儿，值得再看一回！"
         ],
         [
             "阿姨：你们家新买的牛养得咋样？",
-            "瘦大叔：还行，挺听话的，就是吃得多。刚才还牵出去遛了遛。",
+            "瘦大叔：还行，挺听话的，就是吃得多。",
             "阿姨：牲口壮实了，来年春耕就省事不少！"
         ],
         [
@@ -1785,38 +1860,43 @@ function getRandomConversation() {
             "年轻妈妈：婶儿，你人真好！"
         ],
         [
-            "眼镜青年：大娘，你家院子里那菜咋种的，绿油油一大片，长势真好。",
-            "大娘：没啥诀窍，勤浇水勤施肥。回头我给你送些菜籽过去，你自己试试。"
+            "眼镜青年：大娘，你家院子里那菜咋种的，长势真好。",
+            "大娘：没啥诀窍，简单的很，勤浇水勤施肥。",
+            "大娘：回头我给你送些菜籽过去，你自个儿也试试。"
         ],
         [
             "中年男人：嫂子，我听你家二宝满月了？",
             "大嫂：可不是么，刚办完满月酒，你咋没过来喝两盅？",
-            "中年男人：哎呀，这两天地里活儿实在走不开，改天我再登门去看看娃。"
+            "中年男人：哎呀，这两天地里活儿实在走不开！",
+            "中年男人：改天我再登门去看看娃。",
+            "大嫂：没事儿，你忙你的。"
         ],
         [
             "青年：师傅，听说你补鞋手艺好，活儿都干到镇上去了？",
-            "补鞋匠：唉，手艺一般，就是讲个实在，没别的秘诀。",
+            "补鞋匠：唉，我就是讲个实在，没啥手艺。",
             "青年：您太谦虚啦，镇上人都说您的手艺好着呢！"
         ],
         [
             "草帽大叔：昨天河里钓鱼去啦？",
-            "年轻小伙：去了，大叔，钓了半天就一条小鲫鱼，还被家里猫叼走了。",
+            "年轻小伙：去了，钓了半天就一条小鲫鱼，还被家里猫叼走了。",
             "草帽大叔：哈哈，那猫倒是有口福，比你还会钓鱼呢！"
         ],
         [
             "老爷爷：小伙子，你骑的这自行车瞅着挺新鲜，是新买的？",
-            "男青年：大爷，这是二手的，前几天在集市淘来的，自己刷的漆。",
+            "男青年：大爷，这是二手的",
+            "男青年：前几天在集市淘来的，自己刷的漆。",
             "老爷爷：好，有手艺，能干的年轻人走哪都吃香！"
         ],
         [
             "年轻姑娘：叔，您看这路边的油菜花开得真好看！",
-            "大叔：嗯，庄稼好了，风景也跟着好，咱农村的景色不比城里差！",
+            "大叔：嗯，庄稼好了，风景也跟着好！",
             "年轻姑娘：是啊，我上次带城里的同学来家玩，他们都舍不得走呢。"
         ],
         [
             "阿姨：孩子，新书包真好看，是妈妈缝的？",
-            "小学生：嗯，是娘用旧衣服做的，说省下的钱给我买课本。",
-            "阿姨：你娘可真巧，回头婶儿给你几个铅笔本，好好念书哈。"
+            "小学生：是娘用旧衣服做的，说省下的钱给我买课本。",
+            "阿姨：你娘可真巧，回头婶儿给你几个铅笔本，好好念书哈。",
+            "小学生：谢谢阿姨！"
         ],
         [
             "中年妇女：我看你家院里养的鸡鸭挺多，平时费事不？",
@@ -1825,42 +1905,79 @@ function getRandomConversation() {
         ],
         [
             "眼镜青年：大伯，这秧苗种多久了，看着长势不错啊。",
-            "老伯：种了快俩月了，今儿天晴，我专门去田里看了看，估摸着秋天能丰收。",
-            "眼镜青年：真好，到时候咱庄上又是一片热闹景象。"
+            "老伯：种了快俩月了，估摸着秋天能丰收。",
+            "眼镜青年：真好，到时候咱乡里又是一片热闹景象。"
         ],
         [
-            "扇扇子大娘：这天儿可真热，晚上你们村头还纳凉不？",
-            "青年妇女：还纳呢，每晚可热闹了，老人唠嗑，孩子们玩捉迷藏，热天儿也过得舒心。",
+            "扇扇子大娘：这天儿可真热，晚上村头还纳凉不？",
+            "青年妇女：还纳呢，每晚可热闹了！",
+            "青年妇女：老人唠嗑，孩子们捉迷藏，热天儿也过得舒心。",
             "扇扇子大娘：有伴儿闲话，比啥风扇都管用。"
         ],
         [
-            "瘦大叔：嫂子，你家灶上的柴火够用不？要是不够，我帮你送点过去。",
+            "瘦大叔：嫂子，你家灶上的柴火够用不，我送点过去？",
             "胖大嫂：够用呢，你兄弟前两天刚打了几捆柴，后院堆得满满的。",
             "瘦大叔：成，不够记得招呼一声。"
         ],
         [
-            "老奶奶：你们年轻人赶上好时候了，晚上有电灯，我年轻那会儿煤油灯晃得眼睛疼。",
+            "老奶奶：你们年轻人赶上好时候了，晚上有电灯。",
+            "老奶奶：我年轻那会儿煤油灯晃得眼睛疼。",
             "女青年：奶奶，您那时候虽然灯光暗点，可日子肯定也很温暖啊。",
             "老奶奶：哈哈，这话倒是真的，人心齐，煤油灯也照得亮堂！"
         ],
         [
             "年轻姑娘：婶儿，听说你会裁衣服，教教我呗？",
-            "巧手婶婶：没问题，回头来家里，手艺这东西，多学一样，以后日子就好过一点。",
+            "巧手婶婶：没问题，回头来家里。",
+            "巧手婶婶：手艺这东西，多学一样，以后日子就好过一点。",
             "年轻姑娘：婶儿真好，我明天就去！"
         ],
         [
             "中年男人：现在村里的娃娃们天天早晨还做广播操吧？",
-            "眼镜青年：做着呢！早上六点半准时响，连我这老胳膊老腿的，听见广播也想活动活动。",
-            "中年男人：哈哈，一起锻炼，咱庄的精神气儿就起来了！"
+            "眼镜青年：做着呢！早上六点半准时响。",
+            "眼镜青年：我这老胳膊老腿的，听见广播也想活动活动。",
+            "中年男人：哈哈，一起锻炼，咱乡里的精神气儿就起来了！"
         ],
         [
             "胖大叔：桂花嫂，今年中秋你家还做月饼不？",
-            "桂花嫂：做呀，早订了好多，都是邻里街坊的，我寻思今年再添点馅儿，大家尝个新鲜。",
-            "胖大叔：那我可提前预定几个了，你家月饼味道，吃了一年还惦记呢。"
+            "桂花嫂：做呀，早订了好多，都是邻里街坊的。",
+            "桂花嫂：我寻思今年再添点馅儿，大家尝个新鲜。",
+            "胖大叔：那可得给我留些，你家月饼味道，吃了一年还惦记呢。"
         ]
     ];
     
-    return conversations[Math.floor(Math.random() * conversations.length)];
+    // 如果只是获取对话数量，则直接返回数组长度
+    if (countOnly) {
+        return conversations.length;
+    }
+    
+    // 获取未使用过的对话
+    const availableIndices = [];
+    for (let i = 0; i < conversations.length; i++) {
+        if (!passengerSystem.usedConversations.has(i)) {
+            availableIndices.push(i);
+        }
+    }
+    
+    // 如果所有对话都已使用过，重置集合并重新开始
+    if (availableIndices.length === 0) {
+        console.log('所有对话内容都已使用过，重置使用记录并重新开始');
+        passengerSystem.usedConversations.clear();
+        
+        // 重新填充可用索引
+        for (let i = 0; i < conversations.length; i++) {
+            availableIndices.push(i);
+        }
+    }
+    
+    // 从未使用过的对话中随机选择一个
+    const randomIndex = Math.floor(Math.random() * availableIndices.length);
+    const selectedIndex = availableIndices[randomIndex];
+    
+    // 标记该对话为已使用
+    passengerSystem.usedConversations.add(selectedIndex);
+    console.log(`选择对话索引 ${selectedIndex}，剩余未使用对话数量: ${availableIndices.length - 1}`);
+    
+    return conversations[selectedIndex];
 }
 
 // 显示当前对话句子
@@ -1878,7 +1995,7 @@ function showCurrentDialogueMessage() {
             // 更新按钮文本
             const storyButton = document.getElementById('passenger-story-btn');
             if (storyButton) {
-                storyButton.innerHTML = `田园轶事: ${passengerSystem.chatHistory.length}`;
+                storyButton.innerHTML = `田园轶闻: ${passengerSystem.chatHistory.length}`;
             }
         }
         
@@ -1889,7 +2006,22 @@ function showCurrentDialogueMessage() {
     } else {
         // 所有对话句子都已显示完，结束对话
         console.log('对话完成，准备结束对话');
-        hideChatBubble();
+        
+        // 先重置乘客高亮样式
+        passengerSystem.chatSystem.activeChatters.forEach(seat => {
+            const seatId = seat.id;
+            console.log(`重置对话结束的乘客样式：${seatId}`);
+            
+            const seatElement = document.getElementById(seatId);
+            if (seatElement) {
+                const passengerElement = seatElement.querySelector('.passenger');
+                if (passengerElement) {
+                    passengerElement.style.backgroundColor = '#000';
+                    passengerElement.style.boxShadow = 'none';
+                    passengerElement.classList.remove('chatting');
+                }
+            }
+        });
         
         // 将当前对话的乘客添加到已对话集合中
         console.log('当前活跃对话者数量:', passengerSystem.chatSystem.activeChatters.length);
@@ -1907,6 +2039,12 @@ function showCurrentDialogueMessage() {
         passengerSystem.chatSystem.currentDialogueIndex = 0;
         passengerSystem.chatSystem.isChattingActive = false;
         
+        // 清空活跃对话者数组
+        passengerSystem.chatSystem.activeChatters = [];
+        
+        // 最后隐藏对话气泡
+        hideChatBubble();
+        
         console.log('对话状态已重置，chattedSeats集合大小:', passengerSystem.chatSystem.chattedSeats.size);
         console.log('chattedSeats包含的座位ID:', Array.from(passengerSystem.chatSystem.chattedSeats));
     }
@@ -1914,8 +2052,8 @@ function showCurrentDialogueMessage() {
 
 // 更新乘客和路人系统
 function updatePassengerSystem(deltaTime) {
-    // 创建初始的下车提示元素
-    if (!passengerSystem.notificationElement) {
+    // 创建初始的UI元素
+    if (!passengerSystem.passengerCountElement) {
         createPassengerNotification();
     }
     
@@ -1954,13 +2092,17 @@ function updatePassengerSystem(deltaTime) {
                     const isChattingNow = passengerSystem.chatSystem.isChattingActive && 
                                          passengerSystem.chatSystem.activeChatters.some(seat => seat.id === seatId);
                     
-                    // 只有不在对话中的乘客才会被标记为等待下车
+                    // 把乘客标记为等待下车
+                    passenger.isWaiting = true;
+                    
+                    // 只有不在对话中的乘客才会立即触发下车提示
                     if (!isChattingNow) {
-                        passenger.isWaiting = true;
                         passengerSystem.waitingCount++;
                         
                         // 显示下车提示
                         showPassengerNotification();
+                    } else {
+                        console.log(`乘客在座位 ${seatId} 到站了，但正在对话，将在对话完成后下车`);
                     }
                 }
             }
@@ -1979,6 +2121,19 @@ function updatePassengerSystem(deltaTime) {
         // 如果巴士停止，重置连续运动时间计数
         if (!busAnimation.isMoving && busAnimation.currentSpeedFactor < 0.01) {
             passengerSystem.movingTime = 0;
+        }
+    }
+    
+    // 检查是否有对话已结束的乘客需要下车
+    if (!passengerSystem.chatSystem.isChattingActive) {
+        // 检查是否有等待下车但因为在对话中而被延迟的乘客
+        const delayedPassengers = passengerSystem.passengers.filter(p => 
+            p.isWaiting && !passengerSystem.waitingCount);
+        
+        if (delayedPassengers.length > 0) {
+            console.log(`${delayedPassengers.length} 个对话结束的乘客可以下车了`);
+            passengerSystem.waitingCount += delayedPassengers.length;
+            showPassengerNotification();
         }
     }
     
@@ -2016,6 +2171,7 @@ function updatePassengerSystem(deltaTime) {
                     
                     // 释放座位
                     if (passenger.seatId) {
+                        // 释放座位（freeSeat函数内部会调用releaseSeatFromChat）
                         seatSystem.freeSeat(passenger.seatId);
                     }
                 });
@@ -2051,21 +2207,49 @@ function showChatHistory() {
         border-radius: 15px;
         width: 80%;
         max-width: 600px;
-        max-height: 80vh;
-        overflow-y: auto;
+        height: 80vh;
         z-index: 2000;
         box-shadow: 0 0 20px rgba(0,0,0,0.2);
+        display: flex;
+        flex-direction: column;
     `;
     
     // 创建标题
     const title = document.createElement('h2');
-    title.innerHTML = `田园轶事 (${passengerSystem.chatHistory.length})`;
+    title.innerHTML = `田园轶闻`;
     title.style.cssText = `
         text-align: center;
-        margin-bottom: 20px;
+        margin-bottom: 10px;
         color: #333;
     `;
     historyContainer.appendChild(title);
+    
+    // 添加未触发对话数量信息
+    const remainingConversations = document.createElement('p');
+    // 动态获取对话总数量
+    const totalConversations = getConversationsCount();
+    const usedCount = passengerSystem.usedConversations.size;
+    const remainingCount = totalConversations - usedCount;
+    
+    remainingConversations.innerHTML = ` ${totalConversations - remainingCount}/${totalConversations}`;
+    remainingConversations.style.cssText = `
+        text-align: center;
+        margin-bottom: 20px;
+        color: #777;
+        font-size: 14px;
+        font-style: italic;
+    `;
+    historyContainer.appendChild(remainingConversations);
+    
+    // 创建对话历史的滚动容器
+    const scrollContainer = document.createElement('div');
+    scrollContainer.style.cssText = `
+        flex: 1;
+        overflow-y: auto;
+        overflow-x: hidden;
+        margin-bottom: 15px;
+    `;
+    historyContainer.appendChild(scrollContainer);
     
     // 如果没有历史记录
     if (passengerSystem.chatHistory.length === 0) {
@@ -2076,101 +2260,70 @@ function showChatHistory() {
             color: #666;
             font-style: italic;
         `;
-        historyContainer.appendChild(emptyMessage);
+        scrollContainer.appendChild(emptyMessage);
     } else {
+        // 创建一个单一的容器来装所有轶事内容
+        const allConversationsContainer = document.createElement('div');
+        allConversationsContainer.style.cssText = `
+            padding: 15px;
+            background-color: #f5f5f5;
+            border-radius: 10px;
+        `;
+        
         // 显示历史记录（已经是倒序排列）
         passengerSystem.chatHistory.forEach((conversation, index) => {
-            // 为每个对话生成概括性标题和一句话纪事
-            const title = generateConversationTitle(conversation);
+            // 只获取一句话纪事摘要，不再使用标题
             const summary = generateConversationSummary(conversation);
             
+            // 创建轶事内容容器
             const conversationDiv = document.createElement('div');
             conversationDiv.style.cssText = `
-                margin-bottom: 20px;
-                padding: 15px;
-                background-color: #f5f5f5;
-                border-radius: 10px;
+                margin-bottom: 15px;
+                padding: 12px;
+                background-color: #fff;
+                border-radius: 8px;
+                border-left: 4px solid #3498db;
             `;
-            
-            // 显示概括性标题
-            const conversationTitle = document.createElement('h3');
-            conversationTitle.innerHTML = title;
-            conversationTitle.style.cssText = `
-                margin-bottom: 10px;
-                color: #333;
-                font-weight: bold;
-            `;
-            conversationDiv.appendChild(conversationTitle);
             
             // 显示一句话纪事
             const conversationSummary = document.createElement('p');
             conversationSummary.innerHTML = summary;
             conversationSummary.style.cssText = `
-                margin: 10px 0;
+                margin: 0;
                 color: #555;
-                font-style: italic;
             `;
             conversationDiv.appendChild(conversationSummary);
             
-            // 添加"查看原对话"按钮
-            const viewOriginalButton = document.createElement('button');
-            viewOriginalButton.innerHTML = '查看原对话';
-            viewOriginalButton.style.cssText = `
-                padding: 5px 10px;
-                background-color: #3498db;
-                color: white;
-                border: none;
-                border-radius: 10px;
-                cursor: pointer;
-                font-size: 12px;
-                margin-top: 5px;
-            `;
+            // 添加这个对话到所有对话的容器中
+            allConversationsContainer.appendChild(conversationDiv);
             
-            // 创建原对话内容的容器（初始隐藏）
-            const originalConversation = document.createElement('div');
-            originalConversation.style.cssText = `
-                margin-top: 10px;
-                padding: 10px;
-                background-color: #fff;
-                border-radius: 8px;
-                display: none;
-            `;
-            
-            // 添加原对话内容
-            conversation.forEach(line => {
-                const message = document.createElement('p');
-                message.innerHTML = line;
-                message.style.cssText = `
-                    margin: 5px 0;
-                    color: #555;
+            // 如果不是最后一个对话，添加分隔线
+            if (index < passengerSystem.chatHistory.length - 1) {
+                const divider = document.createElement('hr');
+                divider.style.cssText = `
+                    border: none;
+                    border-top: 1px dashed #ddd;
+                    margin: 15px 0;
                 `;
-                originalConversation.appendChild(message);
-            });
-            
-            // 添加点击事件来切换显示/隐藏原对话
-            viewOriginalButton.addEventListener('click', () => {
-                if (originalConversation.style.display === 'none') {
-                    originalConversation.style.display = 'block';
-                    viewOriginalButton.innerHTML = '隐藏原对话';
-                } else {
-                    originalConversation.style.display = 'none';
-                    viewOriginalButton.innerHTML = '查看原对话';
-                }
-            });
-            
-            conversationDiv.appendChild(viewOriginalButton);
-            conversationDiv.appendChild(originalConversation);
-            
-            historyContainer.appendChild(conversationDiv);
+                allConversationsContainer.appendChild(divider);
+            }
         });
+        
+        // 将所有对话的容器添加到滚动区域
+        scrollContainer.appendChild(allConversationsContainer);
     }
+    
+    // 创建底部按钮容器（放在滚动区域外）
+    const buttonContainer = document.createElement('div');
+    buttonContainer.style.cssText = `
+        display: flex;
+        justify-content: center;
+    `;
     
     // 创建关闭按钮
     const closeButton = document.createElement('button');
     closeButton.innerHTML = '关闭';
     closeButton.style.cssText = `
-        display: block;
-        margin: 20px auto 0;
         padding: 8px 20px;
         background-color: #e74c3c;
         color: white;
@@ -2184,7 +2337,11 @@ function showChatHistory() {
         document.body.removeChild(historyContainer);
     });
     
-    historyContainer.appendChild(closeButton);
+    // 添加按钮到底部按钮容器
+    buttonContainer.appendChild(closeButton);
+    
+    // 将按钮容器添加到历史记录容器
+    historyContainer.appendChild(buttonContainer);
     
     // 添加到页面
     document.body.appendChild(historyContainer);
@@ -2192,22 +2349,80 @@ function showChatHistory() {
 
 // 根据对话内容生成概括性标题
 function generateConversationTitle(conversation) {
-    // 获取对话中的主要角色
-    const speakers = extractSpeakers(conversation);
-    
     // 根据对话内容确定主题
-    const topic = determineConversationTopic(conversation);
+    const fullText = conversation.join(' ');
     
-    return `${speakers.join("与")}的${topic}`;
+    // 根据对话内容关键词生成更具诗意的标题
+    if (fullText.includes('麦子') || fullText.includes('收成') || fullText.includes('雨水')) {
+        return "滋养花朵的雨";
+    } else if (fullText.includes('打工') || fullText.includes('工厂')) {
+        return "飞向天外的鸟";
+    } else if (fullText.includes('上学') || fullText.includes('学校')) {
+        return "知识的种子";
+    } else if (fullText.includes('村东头') || fullText.includes('桥')) {
+        return "通向远方的桥";
+    } else if (fullText.includes('定亲') || fullText.includes('闺女')) {
+        return "人生的新篇章";
+    } else if (fullText.includes('孙子') || fullText.includes('成绩')) {
+        return "无拘无束的童年";
+    } else if (fullText.includes('感冒')) {
+        return "温暖的关怀";
+    } else if (fullText.includes('猪') || fullText.includes('菜园')) {
+        return "小小的意外";
+    } else if (fullText.includes('赶集')) {
+        return "热闹的集市";
+    } else if (fullText.includes('孩子') || fullText.includes('淘气')) {
+        return "童年的烦恼";
+    } else if (fullText.includes('地里') || fullText.includes('玉米')) {
+        return "辛勤的汗水";
+    } else if (fullText.includes('腿摔了')) {
+        return "守望相助";
+    } else if (fullText.includes('电影')) {
+        return "流动的光影";
+    } else if (fullText.includes('牛')) {
+        return "田野的朋友";
+    } else if (fullText.includes('箩筐') || fullText.includes('编')) {
+        return "巧手编织的情";
+    } else if (fullText.includes('院子') || fullText.includes('菜')) {
+        return "绿油油的希望";
+    } else if (fullText.includes('二宝') || fullText.includes('满月')) {
+        return "新生命的礼赞";
+    } else if (fullText.includes('补鞋')) {
+        return "老手艺的传承";
+    } else if (fullText.includes('钓鱼')) {
+        return "安静的水面";
+    } else if (fullText.includes('自行车')) {
+        return "铁马的旅途";
+    } else if (fullText.includes('油菜花')) {
+        return "金色的田野";
+    } else if (fullText.includes('书包')) {
+        return "知识的行囊";
+    } else if (fullText.includes('鸡鸭') || fullText.includes('黄鼠狼')) {
+        return "院子里的小战争";
+    } else if (fullText.includes('秧苗')) {
+        return "希望的田野";
+    } else if (fullText.includes('纳凉')) {
+        return "夏夜的歌谣";
+    } else if (fullText.includes('柴火')) {
+        return "温暖的灶台";
+    } else if (fullText.includes('电灯') || fullText.includes('煤油灯')) {
+        return "时光的更迭";
+    } else if (fullText.includes('裁衣服')) {
+        return "针线间的智慧";
+    } else if (fullText.includes('广播操')) {
+        return "晨曦中的旋律";
+    } else if (fullText.includes('月饼') || fullText.includes('中秋')) {
+        return "圆月下的团圆";
+    } else {
+        return "乡间的絮语";
+    }
 }
 
 // 根据对话内容生成一句话纪事
 function generateConversationSummary(conversation) {
     // 提取对话主要内容并概括成一句话
-    const speakers = extractSpeakers(conversation);
     const content = summarizeContent(conversation);
-    
-    return `${speakers[0]}和${speakers[1]}在公交车上${content}。`;
+    return content;
 }
 
 // 从对话中提取说话者
@@ -2264,66 +2479,102 @@ function summarizeContent(conversation) {
     const fullText = conversation.join(' ');
     
     if (fullText.includes('麦子') || fullText.includes('收成')) {
-        return '交流了今年麦子的收成和庄稼的情况';
+        return "最近雨水充足，村民们很开心，觉得今年孩子的学费有着落了。";
     } else if (fullText.includes('打工') || fullText.includes('工厂')) {
-        return '讨论了进城打工的经历和注意事项';
+        return "年轻人进城打工，长辈叮嘱他身体健康比金钱更重要。";
     } else if (fullText.includes('上学') || fullText.includes('学校')) {
-        return '聊了学校生活和学习情况';
+        return "上学路上的小姑娘，得到了老人家递来的热饼和关心。";
     } else if (fullText.includes('村东头') || fullText.includes('桥')) {
-        return '谈论了村里即将修建的桥梁';
+        return "村里即将修建新桥，村民们期待着往返镇上会更加方便。";
     } else if (fullText.includes('定亲') || fullText.includes('闺女')) {
-        return '分享了家里闺女定亲的喜事';
+        return "闺女定亲的喜事传开，邻里间相约共庆红白喜事。";
     } else if (fullText.includes('孙子') || fullText.includes('成绩')) {
-        return '交流了孙子的学习成绩和教育理念';
+        return "老人对孙子教育有独特见解，认为品德比成绩更重要。";
     } else if (fullText.includes('感冒')) {
-        return '关心了对方的感冒恢复情况';
+        return "小姑娘的感冒好转了，长辈们还不忘叮嘱要多注意保暖。";
     } else if (fullText.includes('猪') || fullText.includes('菜园')) {
-        return '谈论了家里猪跑到村长菜园的趣事';
+        return "家里的猪闯进了村长菜园，引出了邻里间的笑话和互助承诺。";
     } else if (fullText.includes('赶集')) {
-        return '交流了赶集的计划和期待';
+        return "集市日的盼头，不仅是物品交换，更是生活乐趣的寄托。";
     } else if (fullText.includes('孩子') || fullText.includes('淘气')) {
-        return '讨论了孩子的性格和教育问题';
+        return "表面懂事的孩子家中淘气，妈妈们交流着育儿的喜忧参半。";
     } else if (fullText.includes('地里') || fullText.includes('玉米')) {
-        return '聊起了地里的农活和收成情况';
+        return "地里的农活即将收尾，劳作的辛苦后有热包子的慰藉。";
     } else if (fullText.includes('腿摔了')) {
-        return '关心了家人的伤势和邻里互助';
+        return "一人摔伤了腿，感受到了邻里胜似亲人的关怀和帮助。";
     } else if (fullText.includes('电影')) {
-        return '分享了对即将放映的电影的期待';
+        return "村里即将放映的电影，勾起了人们对经典老片的热切期待。";
     } else if (fullText.includes('牛')) {
-        return '交流了新买的牛的饲养情况';
+        return "新买的牛虽然吃得多，但寄托着来年春耕的希望。";
     } else if (fullText.includes('箩筐') || fullText.includes('赶集卖')) {
-        return '赞美了对方编制的箩筐手艺';
-    } else if (fullText.includes('菜')) {
-        return '交流了种菜的经验和心得';
+        return "手工编织的箩筐既是谋生工具，也是邻里间传递情谊的媒介。";
+    } else if (fullText.includes('院子') && fullText.includes('菜')) {
+        return "院子里青翠的菜园，承载着勤劳和分享的乡村美德。";
     } else if (fullText.includes('二宝') || fullText.includes('满月')) {
-        return '谈论了孩子满月的喜事';
+        return "孩子满月的喜事，让亲朋无法到场的遗憾中也含着真诚的祝福。";
     } else if (fullText.includes('补鞋')) {
-        return '称赞了对方的补鞋手艺';
+        return "诚实做事的补鞋匠，凭手艺和信誉在镇上赢得了口碑。";
     } else if (fullText.includes('钓鱼')) {
-        return '分享了钓鱼的趣事和经历';
+        return "半天只钓到一条被猫叼走的小鱼，成了两人交谈中的笑料。";
     } else if (fullText.includes('自行车')) {
-        return '交流了自行车的购买和维修经验';
+        return "二手自行车经过修整焕发新生，展现了年轻人的巧手和智慧。";
     } else if (fullText.includes('油菜花')) {
-        return '欣赏了路边美丽的油菜花';
+        return "路边盛开的油菜花勾起乡愁，城里来的客人都不忍离去。";
     } else if (fullText.includes('书包')) {
-        return '夸赞了手工制作的新书包';
+        return "旧衣服做成的新书包，蕴含着母亲的爱和乡邻的关怀。";
     } else if (fullText.includes('鸡鸭') || fullText.includes('黄鼠狼')) {
-        return '交流了养殖家禽的经验和注意事项';
+        return "养鸡鸭的辛苦不在照料，而在与黄鼠狼的机智周旋。";
     } else if (fullText.includes('秧苗')) {
-        return '交流了秧苗的生长情况和丰收期待';
+        return "阳光下的秧苗生机勃勃，预示着秋天丰收的喜悦和热闹。";
     } else if (fullText.includes('纳凉')) {
-        return '讨论了村头纳凉的热闹景象';
+        return "村头纳凉处的老人闲谈和孩童嬉戏，编织成夏夜最美的风景。";
     } else if (fullText.includes('柴火')) {
-        return '关心了家中柴火的储备情况';
+        return "邻里间的柴火互助，如同燃起的不只是炉灶，还有人情温暖。";
     } else if (fullText.includes('电灯') || fullText.includes('煤油灯')) {
-        return '感叹了新旧时代生活的变化';
+        return "从煤油灯到电灯的变迁，见证着时代发展和人心不变的温暖。";
     } else if (fullText.includes('裁衣服')) {
-        return '交流了裁衣服的手艺经验';
+        return "裁衣手艺的传授，是年长者给年轻人最实用的生活赠礼。";
     } else if (fullText.includes('广播操')) {
-        return '聊起了村里的早晨广播操活动';
+        return "清晨广播操的声音唤醒村庄，凝聚起村民们的精神和活力。";
     } else if (fullText.includes('月饼') || fullText.includes('中秋')) {
-        return '讨论了中秋节月饼制作和分享';
+        return "手工月饼的香气弥漫村庄，预约的热情印证着乡邻间的情谊。";
     } else {
-        return '分享了生活中的温馨小事';
+        return "公交车上的闲谈，刻画出乡村生活中最朴实的人情味。";
     }
+}
+
+// 初始化随机乘客
+function initializeRandomPassengers(count = 6) {
+    console.log(`初始化${count}名随机乘客`);
+    
+    // 已添加的乘客数量
+    let addedCount = 0;
+    
+    // 尝试添加指定数量的乘客
+    while (addedCount < count) {
+        // 检查是否有空座位
+        const emptySeat = seatSystem.getRandomEmptySeat();
+        if (emptySeat) {
+            // 创建新乘客对象
+            const travelTime = 10 + Math.floor(Math.random() * 20); // 10-30秒的随机行程时间
+            const passenger = {
+                remainingTime: travelTime,
+                originalTime: travelTime,
+                seatId: emptySeat.id
+            };
+            
+            // 将乘客添加到系统并占用座位
+            passengerSystem.passengers.push(passenger);
+            seatSystem.occupySeat(emptySeat.id, passenger);
+            
+            console.log('已添加初始乘客到座位：', emptySeat.id);
+            addedCount++;
+        } else {
+            // 如果没有更多空座位，提前结束
+            console.log('没有更多空座位，已添加', addedCount, '名乘客');
+            break;
+        }
+    }
+    
+    console.log(`成功初始化了${addedCount}名随机乘客`);
 }
