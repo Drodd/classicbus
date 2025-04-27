@@ -82,6 +82,16 @@ const seatSystem = {
             seat.occupied = true;
             seat.passenger = passenger;
             this.updateSeatVisual(seat.id, true);
+            
+            // 当新乘客占用座位时，确保从已对话集合中移除该座位ID
+            // 这样新乘客就可以参与对话了
+            if (passengerSystem.chatSystem.chattedSeats.has(seatId)) {
+                console.log(`新乘客占用座位 ${seatId}，从已对话集合中移除该座位`);
+                passengerSystem.chatSystem.chattedSeats.delete(seatId);
+                // 更新测试对话按钮文本
+                updateTestChatButtonText();
+            }
+            
             return true;
         }
         return false;
@@ -775,7 +785,11 @@ function updateTestChatButtonText() {
         }
         
         // 添加提示说明
-        testChatBtn.title = '点击触发乘客对话\n按住Shift键点击可重置所有乘客的对话状态\n按住Alt键点击可重置已使用的对话内容';
+        testChatBtn.title = '点击触发乘客对话\n' +
+            '按住Shift键点击可重置所有乘客的对话状态\n' + 
+            '按住Alt键点击可重置已使用的对话内容\n' +
+            '按住Ctrl键点击可检查无法触发对话的座位\n' +
+            '按住Alt+Shift键点击可修复计时器问题';
     }
 }
 
@@ -792,6 +806,12 @@ function busButtonClickHandler(event) {
     btn.className = busAnimation.isMoving ? 'running' : 'stopped';
     
     console.log('巴士状态已切换为:', busAnimation.isMoving ? '运动' : '停止');
+    
+    // 如果是发车，检查是否触发对话
+    if (busAnimation.isMoving) {
+        // 检查是否有可以触发对话的乘客
+        tryTriggerConversation();
+    }
 }
 
 // 添加乘客按钮点击处理函数
@@ -802,7 +822,7 @@ function addPassengerButtonClickHandler() {
     const emptySeat = seatSystem.getRandomEmptySeat();
     if (emptySeat) {
         // 创建新乘客对象
-        const travelTime = 10 + Math.floor(Math.random() * 20); // 10-30秒的随机行程时间
+        const travelTime = 30 + Math.floor(Math.random() * 31); // 30-60秒的随机行程时间
         const passenger = {
             remainingTime: travelTime,
             originalTime: travelTime,
@@ -823,6 +843,94 @@ function addPassengerButtonClickHandler() {
 // 测试对话按钮点击处理函数
 function testChatButtonClickHandler(event) {
     console.log('测试对话按钮被点击');
+    
+    // 检查是否是同时按住Alt+Shift键（重置所有乘客计时器）
+    if (event && event.altKey && event.shiftKey) {
+        // 修复可能卡住的乘客
+        let fixedCount = 0;
+        
+        // 检查所有乘客
+        passengerSystem.passengers.forEach(passenger => {
+            // 处理剩余时间为负的乘客
+            if (passenger.remainingTime <= 0) {
+                // 将其标记为等待下车
+                if (!passenger.isWaiting) {
+                    passenger.isWaiting = true;
+                    passenger.waitingCountUpdated = true;
+                    fixedCount++;
+                }
+            } else if (passenger.remainingTime > 30) {
+                // 修复可能很大的计时器值
+                passenger.remainingTime = 5; // 设置一个较短的时间
+                fixedCount++;
+            }
+        });
+        
+        // 更新等待下车的乘客计数
+        passengerSystem.waitingCount = passengerSystem.passengers.filter(p => 
+            p.isWaiting && p.waitingCountUpdated).length;
+        
+        // 显示提示
+        if (fixedCount > 0) {
+            alert(`已修复 ${fixedCount} 个乘客计时器问题。\n如果巴士停止，等待下车的乘客会在几秒内下车。`);
+        } else {
+            alert('没有发现需要修复的乘客计时器问题。');
+        }
+        return;
+    }
+    
+    // 检查是否按住Ctrl键（检查无法触发对话的座位）
+    if (event && event.ctrlKey) {
+        // 获取所有占用的座位
+        const occupiedSeats = seatSystem.seats.filter(seat => seat.occupied);
+        // 获取所有已经参与过对话的座位ID
+        const chattedSeatsIds = Array.from(passengerSystem.chatSystem.chattedSeats);
+        
+        // 过滤出已占用但也被标记为已对话的座位
+        const blockedSeats = occupiedSeats.filter(seat => 
+            chattedSeatsIds.includes(seat.id)
+        );
+        
+        // 获取可能的座位对
+        const seatPairs = [
+            ["seat-1-1-1", "seat-1-1-2"],
+            ["seat-2-1-1", "seat-2-1-2"],
+            ["seat-4-1-1", "seat-4-1-2"],
+            ["seat-5-1-1", "seat-5-1-2"]
+        ];
+        
+        // 检查有多少座位对因为至少一个座位被标记为已对话而无法触发对话
+        let blockedPairs = 0;
+        let detailedInfo = [];
+        
+        for (const pair of seatPairs) {
+            const seat1 = seatSystem.seats.find(s => s.id === pair[0]);
+            const seat2 = seatSystem.seats.find(s => s.id === pair[1]);
+            
+            // 只有当两个座位都被占用，且至少一个被标记为已对话时才算作阻塞
+            if (seat1 && seat2 && seat1.occupied && seat2.occupied) {
+                const seat1Blocked = passengerSystem.chatSystem.chattedSeats.has(seat1.id);
+                const seat2Blocked = passengerSystem.chatSystem.chattedSeats.has(seat2.id);
+                
+                if (seat1Blocked || seat2Blocked) {
+                    blockedPairs++;
+                    detailedInfo.push(`座位对 ${pair[0]},${pair[1]}: ${seat1Blocked ? '左侧被阻塞' : ''} ${seat2Blocked ? '右侧被阻塞' : ''}`);
+                }
+            }
+        }
+        
+        // 显示详细信息
+        let message = `当前有 ${blockedSeats.length} 个座位被标记为已参与对话，${blockedPairs} 对座位无法触发对话。\n\n`;
+        
+        if (detailedInfo.length > 0) {
+            message += detailedInfo.join('\n') + '\n\n';
+        }
+        
+        message += '您可以按住Shift键点击"测试对话"按钮来重置所有座位的对话状态。';
+        alert(message);
+        
+        return;
+    }
     
     // 检查是否是按住Alt键（重置已使用对话内容）
     if (event && event.altKey) {
@@ -1445,7 +1553,7 @@ function updatePedestrians(deltaTime) {
                         console.log('乘客上车，坐在座位：', emptySeat.id);
                         
                         // 创建新乘客对象
-                        const travelTime = 10 + Math.floor(Math.random() * 20); // 10-30秒的随机行程时间
+                        const travelTime = 30 + Math.floor(Math.random() * 31); // 30-60秒的随机行程时间
                         const passenger = {
                             remainingTime: travelTime,
                             originalTime: travelTime,
@@ -1604,21 +1712,32 @@ function hideChatBubble() {
         setTimeout(() => {
             chatBubble.style.display = 'none';
             console.log('对话已停用，chattedSeats大小:', passengerSystem.chatSystem.chattedSeats.size);
+            
+            // 检查是否有乘客等待下车但被锁定
+            const lockedPassengers = passengerSystem.passengers.filter(p => 
+                p.isWaiting && !p.waitingCountUpdated);
+                
+            if (lockedPassengers.length > 0) {
+                console.log(`发现 ${lockedPassengers.length} 个锁定的等待下车乘客，现在修复`);
+                lockedPassengers.forEach(p => {
+                    p.waitingCountUpdated = true;
+                });
+                passengerSystem.waitingCount += lockedPassengers.length;
+            }
         }, 150); // 等待动画完成
     }
 }
 
 // 检查是否可以触发对话
 function checkForConversation(deltaTime) {
-    // 如果已经有对话在进行，更新计时器
+    // 此函数已不再需要，被新的对话触发机制取代
+}
+
+// 尝试触发对话的新函数
+function tryTriggerConversation() {
+    // 如果已经有对话在进行，不触发新对话
     if (passengerSystem.chatSystem.isChattingActive) {
-        passengerSystem.chatSystem.chatTimer += deltaTime;
-        
-        // 如果当前句子对话时间结束，显示下一句或结束对话
-        if (passengerSystem.chatSystem.chatTimer >= passengerSystem.chatSystem.chatDuration) {
-            showCurrentDialogueMessage();
-        }
-        return;
+        return false;
     }
     
     // 检查是否还有未参与对话的座位对
@@ -1630,6 +1749,7 @@ function checkForConversation(deltaTime) {
     ];
     
     let hasAvailablePairs = false;
+    
     for (const pair of seatPairs) {
         const seat1 = seatSystem.seats.find(s => s.id === pair[0]);
         const seat2 = seatSystem.seats.find(s => s.id === pair[1]);
@@ -1646,50 +1766,49 @@ function checkForConversation(deltaTime) {
     
     // 如果没有可用的座位对，不触发对话
     if (!hasAvailablePairs) {
-        return;
+        return false;
     }
     
-    // 随机触发对话的概率检查
-    if (Math.random() < passengerSystem.chatSystem.chatProbability * deltaTime) {
-        console.log('尝试触发对话，当前chattedSeats大小:', passengerSystem.chatSystem.chattedSeats.size);
+    // 寻找同排可能对话的乘客
+    const possibleChatters = findPotentialChatters();
+    console.log('找到可能对话乘客数量：', possibleChatters.length);
+    
+    if (possibleChatters.length >= 2) {
+        // 因为我们按座位对获取的乘客，所以必须成对选择
+        const pairCount = Math.floor(possibleChatters.length / 2);
+        const pairIndex = Math.floor(Math.random() * pairCount);
         
-        // 寻找同排可能对话的乘客
-        const possibleChatters = findPotentialChatters();
-        console.log('找到可能对话乘客数量：', possibleChatters.length);
+        // 选择一对乘客（相邻索引）
+        const chatter1 = possibleChatters[pairIndex * 2];
+        const chatter2 = possibleChatters[pairIndex * 2 + 1];
         
-        if (possibleChatters.length >= 2) {
-            // 因为我们按座位对获取的乘客，所以必须成对选择
-            const pairCount = Math.floor(possibleChatters.length / 2);
-            const pairIndex = Math.floor(Math.random() * pairCount);
-            
-            // 选择一对乘客（相邻索引）
-            const chatter1 = possibleChatters[pairIndex * 2];
-            const chatter2 = possibleChatters[pairIndex * 2 + 1];
-            
-            console.log('选择对话的座位：', chatter1.id, chatter2.id);
-            console.log('这些座位是否已经参与过对话：', 
-                passengerSystem.chatSystem.chattedSeats.has(chatter1.id), 
-                passengerSystem.chatSystem.chattedSeats.has(chatter2.id));
-            
-            // 将这些座位设置为正在对话状态
-            passengerSystem.chatSystem.activeChatters = [chatter1, chatter2];
-            
-            // 高亮显示正在对话的乘客
-            highlightChatters([chatter1, chatter2]);
-            
-            // 获取随机对话内容
-            const dialogueContent = getRandomConversation();
-            console.log('选择的对话内容：', dialogueContent);
-            passengerSystem.chatSystem.currentDialogue = dialogueContent;
-            passengerSystem.chatSystem.currentDialogueIndex = 0;
-            
-            // 显示第一句对话
-            showCurrentDialogueMessage();
-            
-            // 设置对话状态
-            passengerSystem.chatSystem.isChattingActive = true;
-        }
+        console.log('选择对话的座位：', chatter1.id, chatter2.id);
+        console.log('这些座位是否已经参与过对话：', 
+            passengerSystem.chatSystem.chattedSeats.has(chatter1.id), 
+            passengerSystem.chatSystem.chattedSeats.has(chatter2.id));
+        
+        // 将这些座位设置为正在对话状态
+        passengerSystem.chatSystem.activeChatters = [chatter1, chatter2];
+        
+        // 高亮显示正在对话的乘客
+        highlightChatters([chatter1, chatter2]);
+        
+        // 获取随机对话内容
+        const dialogueContent = getRandomConversation();
+        console.log('选择的对话内容：', dialogueContent);
+        passengerSystem.chatSystem.currentDialogue = dialogueContent;
+        passengerSystem.chatSystem.currentDialogueIndex = 0;
+        
+        // 显示第一句对话
+        showCurrentDialogueMessage();
+        
+        // 设置对话状态
+        passengerSystem.chatSystem.isChattingActive = true;
+        
+        return true;
     }
+    
+    return false;
 }
 
 // 查找可能对话的乘客（同一排双人座的乘客）
@@ -2060,6 +2179,11 @@ function showCurrentDialogueMessage() {
         
         console.log('对话状态已重置，chattedSeats集合大小:', passengerSystem.chatSystem.chattedSeats.size);
         console.log('chattedSeats包含的座位ID:', Array.from(passengerSystem.chatSystem.chattedSeats));
+        
+        // 对话结束后，尝试触发新对话
+        setTimeout(() => {
+            tryTriggerConversation();
+        }, 500); // 稍微延迟一下，让上一个对话完全结束
     }
 }
 
@@ -2086,8 +2210,31 @@ function updatePassengerSystem(deltaTime) {
         passengerSystem.passengerCountElement.innerHTML = `到站人数: ${passengerSystem.arrivedCount}`;
     }
     
-    // 检查是否触发乘客对话
-    checkForConversation(deltaTime);
+    // 只更新当前对话状态，不再尝试随机触发新对话
+    if (passengerSystem.chatSystem.isChattingActive) {
+        passengerSystem.chatSystem.chatTimer += deltaTime;
+        
+        // 如果当前句子对话时间结束，显示下一句或结束对话
+        if (passengerSystem.chatSystem.chatTimer >= passengerSystem.chatSystem.chatDuration) {
+            showCurrentDialogueMessage();
+        }
+        
+        // 对话超时检测 - 防止对话系统永久锁定
+        // 如果一句对话显示时间超过了正常显示时间的3倍，则强制结束对话
+        if (passengerSystem.chatSystem.chatTimer > passengerSystem.chatSystem.chatDuration * 3) {
+            console.warn('对话超时，强制结束当前对话');
+            // 立即结束对话，释放可能被锁定的乘客
+            if (passengerSystem.chatSystem.currentDialogue) {
+                passengerSystem.chatSystem.currentDialogueIndex = passengerSystem.chatSystem.currentDialogue.length;
+                showCurrentDialogueMessage(); // 这将触发对话结束流程
+            } else {
+                // 如果对话内容为空，直接重置对话状态
+                passengerSystem.chatSystem.isChattingActive = false;
+                passengerSystem.chatSystem.activeChatters = [];
+                hideChatBubble();
+            }
+        }
+    }
     
     // 更新巴士运动时间计数
     if (busAnimation.isMoving && busAnimation.currentSpeedFactor > 0.5) {
@@ -2217,11 +2364,32 @@ function updatePassengerSystem(deltaTime) {
     if (!busAnimation.isMoving && busAnimation.currentSpeedFactor < 0.01 && passengerSystem.waitingCount === 0) {
         // 检查是否有标记为等待下车但没被计入waitingCount的乘客
         const stuckPassengers = passengerSystem.passengers.filter(p => 
-            p.isWaiting && !passengerSystem.chatSystem.isChattingActive);
+            p.isWaiting && (!passengerSystem.chatSystem.isChattingActive || 
+            (p.seatId && !passengerSystem.chatSystem.activeChatters.some(seat => seat.id === p.seatId))));
         
         if (stuckPassengers.length > 0) {
             console.log(`发现计数问题：有${stuckPassengers.length}个乘客等待下车，但waitingCount为0，现在修正`);
             passengerSystem.waitingCount = stuckPassengers.length;
+            
+            // 确保所有等待下车的乘客都被正确标记为已更新计数
+            stuckPassengers.forEach(p => {
+                p.waitingCountUpdated = true;
+            });
+            
+            showPassengerNotification();
+        }
+        
+        // 检查剩余时间为负但未标记为等待下车的乘客
+        const expiredPassengers = passengerSystem.passengers.filter(p => 
+            p.remainingTime <= 0 && !p.isWaiting);
+            
+        if (expiredPassengers.length > 0) {
+            console.log(`发现${expiredPassengers.length}个剩余时间为负但未标记为等待下车的乘客，现在修正`);
+            expiredPassengers.forEach(p => {
+                p.isWaiting = true;
+                p.waitingCountUpdated = true;
+            });
+            passengerSystem.waitingCount += expiredPassengers.length;
             showPassengerNotification();
         }
     }
@@ -2776,7 +2944,7 @@ function initializeRandomPassengers(count = 6) {
         const emptySeat = seatSystem.getRandomEmptySeat();
         if (emptySeat) {
             // 创建新乘客对象
-            const travelTime = 10 + Math.floor(Math.random() * 20); // 10-30秒的随机行程时间
+            const travelTime = 30 + Math.floor(Math.random() * 31); // 30-60秒的随机行程时间
             const passenger = {
                 remainingTime: travelTime,
                 originalTime: travelTime,
@@ -2797,4 +2965,15 @@ function initializeRandomPassengers(count = 6) {
     }
     
     console.log(`成功初始化了${addedCount}名随机乘客`);
+}
+
+// 释放座位并移除对话状态
+function releaseSeatFromChat(seatId) {
+    if (passengerSystem.chatSystem.chattedSeats.has(seatId)) {
+        console.log(`释放座位 ${seatId} 的对话状态`);
+        passengerSystem.chatSystem.chattedSeats.delete(seatId);
+        
+        // 更新测试对话按钮文本
+        updateTestChatButtonText();
+    }
 }
